@@ -1,36 +1,144 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Project Concept: SafeAlert Guardian
+Mission
 
-## Getting Started
+Help people quickly alert trusted contacts and emergency responders when they feel unsafe.
 
-First, run the development server:
+User Scenario
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Imagine a student is entering a taxi and feels uncomfortable.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+They open SafeAlert Guardian and press:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+🆘 Emergency SOS
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Within seconds, the system:
 
-## Learn More
+Captures GPS location.
+Records current time.
+Sends alerts to trusted contacts.
+Begins sharing live location updates.
+Stores recent location history.
+Displays emergency contacts.
 
-To learn more about Next.js, take a look at the following resources:
+If the phone later loses signal or is turned off, responders can still see:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Last known location
+Last update time
+Recent movement route
+Competition Features
+Feature 1: SOS Button
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Large red button:
 
-## Deploy on Vercel
+┌──────────────────┐
+│ 🆘 │
+│ SEND ALERT NOW │
+└──────────────────┘
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+When clicked:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+navigator.geolocation.getCurrentPosition(...)
+
+Location is sent to the backend.
+
+Feature 2: Trusted Contacts
+
+Users can add:
+
+Parent
+Guardian
+Friend
+Teacher
+
+Example:
+
+Mom
++234xxxxxxxxxx
+
+Dad
++234xxxxxxxxxx
+Feature 3: Live Location Sharing
+
+Every 30 seconds:
+
+setInterval(() => {
+// send location
+}, 30000);
+
+Store:
+
+{
+userId,
+latitude,
+longitude,
+timestamp
+}
+Feature 4: Emergency Dashboard
+
+Authorized users can see:
+
+Name: John Doe
+
+Status: SOS ACTIVE
+
+Last Seen:
+6:43 PM
+
+Location:
+Yaba, Lagos
+Feature 5: Safety Check-In
+
+User chooses:
+
+I'm taking a taxi
+Expected arrival:
+45 minutes
+
+System starts timer.
+
+If timer expires and user doesn't check in:
+
+⚠️ User missed check-in
+
+Emergency contacts are notified.
+
+Feature 6: Route History
+
+Store last 20 locations.
+
+Display on map.
+
+Example:
+
+Point A
+↓
+Point B
+↓
+Point C
+
+This helps identify the person's recent path.
+
+Advanced Features
+Voice Activation
+
+User says:
+
+Help me
+
+or
+
+Emergency
+
+and SOS is triggered.
+
+Fake Call Generator
+
+The app can simulate an incoming call to help someone leave an uncomfortable situation.
+
+Risk Zone Alerts
+
+If the user enters an area reported as dangerous:
+
+⚠️ Warning
+
+This area has multiple recent incidents.
