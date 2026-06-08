@@ -1,3 +1,4 @@
+"use client";
 import Link from "next/link";
 import { FaCircleQuestion, FaShield } from "react-icons/fa6";
 import { FaShieldAlt } from "react-icons/fa";
@@ -6,11 +7,38 @@ import { GoPeople } from "react-icons/go";
 import { LuPhoneCall } from "react-icons/lu";
 import { GrLocation } from "react-icons/gr";
 import { LuShield } from "react-icons/lu";
+import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 
 const baseLinkClass =
   "inline-flex items-center rounded-md gap-4 px-3 py-2 transition-colors hover:bg-gray-200 hover:text-black";
 
 const Navbar = () => {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const hideNavbar = ["/login", "/signin", "/signup"].some((route) =>
+    pathname.startsWith(route),
+  );
+
+  if (hideNavbar) {
+    return null;
+  }
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+
+    try {
+      await fetch("/api/session", {
+        method: "DELETE",
+      });
+    } catch (error) {
+      console.error(error);
+    }
+
+    router.push("/login");
+    router.refresh();
+  };
   return (
     <header className="w-full border-b-2 border-black bg-white">
       <nav className="flex min-h-16 w-full items-center justify-between px-50 sm:px-6">
@@ -20,9 +48,19 @@ const Navbar = () => {
             Safe Guardian App
           </h1>
         </div>
-        <div className="flex items-center gap-4 text-xl text-gray-700">
-          <FaCircleQuestion className="cursor-pointer transition-colors hover:text-black" />
-          <FaShieldAlt className="cursor-pointer transition-colors hover:text-black" />
+        <div className="flex items-center gap-4 text-gray-700">
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="rounded-md border border-gray-300 px-3 py-1 text-sm font-semibold text-black transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoggingOut ? "Logging out..." : "Logout"}
+          </button>
+          <div className="flex items-center gap-4 text-xl">
+            <FaCircleQuestion className="cursor-pointer transition-colors hover:text-black" />
+            <FaShieldAlt className="cursor-pointer transition-colors hover:text-black" />
+          </div>
         </div>
       </nav>
       <ul className="flex w-full flex-wrap items-center gap-2 px-4 py-3 text-sm font-bold text-gray-700 bg-gray-100 justify-around ">

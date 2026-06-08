@@ -5,7 +5,7 @@ const page = () => {
   return (
     <main className="w-full h-full p-8 bg-gray-50">
       <section className="w-full h-full border-2 border-gray-300 rounded-lg p-8 bg-white">
-        <h1 className="text-2xl text-black font-medium">Emergency Alert</h1>
+        <h1 className="text-2xl text-black font-semibold">Emergency Alert</h1>
         <p className="text-gray-500 pt-3">
           Press the button below to immediately alert your trusted contacts.
         </p>
@@ -28,8 +28,8 @@ const page = () => {
       </section>
 
       <section className="w-full h-full border-2 border-gray-300 rounded-lg p-8 bg-white mt-8">
-        <h2 className="text-black">Quick Info</h2>
-        <ul className="list-disc list-inside text-gray-500 mt-4">
+        <h2 className="text-black font-semibold">Quick Info</h2>
+        <ul className="list-disc list-inside text-gray-600 mt-4">
           <li>Your location is being tracked when SOS is active</li>
           <li>
             Keep your trusted contacts updated with your current information.
