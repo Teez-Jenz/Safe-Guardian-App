@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import {
+  Dispatch,
+  FormEvent,
+  KeyboardEvent,
+  MutableRefObject,
+  SetStateAction,
+  useRef,
+  useState,
+} from "react";
 import { supabase } from "@/lib/supabase";
 import { LuShield } from "react-icons/lu";
 import { CiPhone } from "react-icons/ci";
@@ -13,13 +21,47 @@ type UserRecord = {
   email: string | null;
   phoneNumber: string;
 };
+const PIN_LENGTH = 4;
 
 const LoginPage = () => {
   const router = useRouter();
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [pin, setPin] = useState("");
+  const [pinDigits, setPinDigits] = useState<string[]>(
+    Array(PIN_LENGTH).fill(""),
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+
+  const updatePinDigit = (
+    index: number,
+    value: string,
+    setDigits: Dispatch<SetStateAction<string[]>>,
+    inputRefs: MutableRefObject<Array<HTMLInputElement | null>>,
+  ) => {
+    const sanitizedDigit = value.replace(/\D/g, "").slice(-1);
+
+    setDigits((previousDigits) => {
+      const nextDigits = [...previousDigits];
+      nextDigits[index] = sanitizedDigit;
+      return nextDigits;
+    });
+
+    if (sanitizedDigit && index < PIN_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handlePinKeyDown = (
+    event: KeyboardEvent<HTMLInputElement>,
+    index: number,
+    digits: string[],
+    inputRefs: MutableRefObject<Array<HTMLInputElement | null>>,
+  ) => {
+    if (event.key === "Backspace" && !digits[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+  };
 
   const createSession = async (user: UserRecord) => {
     const response = await fetch("/api/session", {
@@ -45,6 +87,7 @@ const LoginPage = () => {
     setErrorMessage("");
 
     const trimmedPhoneNumber = phoneNumber.trim();
+    const pin = pinDigits.join("");
 
     if (!trimmedPhoneNumber || !pin) {
       setErrorMessage("Phone number and PIN are required.");
@@ -131,20 +174,6 @@ const LoginPage = () => {
               </p>
             </div>
 
-            {/* <div>
-              <label htmlFor="phoneNumber" className="text-sm text-black">
-                Phone Number
-              </label>
-              <input
-                id="phoneNumber"
-                type="tel"
-                value={phoneNumber}
-                onChange={(event) => setPhoneNumber(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Enter your phone number"
-              />
-            </div> */}
-
             <div className="mb-6">
               <label
                 htmlFor="phoneNumber"
@@ -165,42 +194,39 @@ const LoginPage = () => {
                 />
               </div>
             </div>
-            {/* 
-            <div>
-              <label htmlFor="pin" className="text-sm text-black">
-                PIN
-              </label>
-              <input
-                id="pin"
-                type="password"
-                inputMode="numeric"
-                pattern="\d{4}"
-                maxLength={4}
-                value={pin}
-                onChange={(event) => setPin(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Enter your 4-digit PIN"
-              />
-            </div> */}
 
             <div className="mb-6">
               <label
                 htmlFor="pin"
                 className="block text-sm font-semibold text-gray-700 mb-3"
               >
-                Create a 4-digit PIN
+                Enter your 4-digit PIN
               </label>
 
               <div className="flex gap-3">
-                {[1, 2, 3, 4].map((item) => (
+                {Array.from({ length: PIN_LENGTH }).map((_, index) => (
                   <input
-                    key={item}
-                    id="pin"
-                    type="password"
+                    key={`pin-${index}`}
+                    id={`pin-${index}`}
+                    type="text"
+                    inputMode="numeric"
                     maxLength={1}
-                    value={pin}
-                    onChange={(event) => setPin(event.target.value)}
-                    className="w-14 h-14 border border-gray-300 rounded-2xl text-center text-xl outline-none focus:border-blue-500"
+                    value={pinDigits[index]}
+                    onChange={(event) =>
+                      updatePinDigit(
+                        index,
+                        event.target.value,
+                        setPinDigits,
+                        pinInputRefs,
+                      )
+                    }
+                    onKeyDown={(event) =>
+                      handlePinKeyDown(event, index, pinDigits, pinInputRefs)
+                    }
+                    ref={(element) => {
+                      pinInputRefs.current[index] = element;
+                    }}
+                    className="w-14 h-14 border text-black border-gray-300 rounded-2xl text-center text-xl outline-none focus:border-blue-500"
                   />
                 ))}
               </div>

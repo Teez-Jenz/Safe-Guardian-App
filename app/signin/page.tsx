@@ -115,7 +115,10 @@ const Testing = () => {
 
       <div className="bg-slate-100 w-full">
         <div className="w-full flex justify-center">
-          <form onSubmit={handleSubmit} className="bg-white p-8 rounded-md">
+          <form
+            onSubmit={handleSubmit}
+            className="bg-white p-8 rounded-md shadow-lg"
+          >
             {errorMessage ? (
               <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 {errorMessage}
@@ -185,22 +188,7 @@ const Testing = () => {
               </div>
             </div>
 
-            {/* <div>
-              <label htmlFor="email" className="text-sm text-black">
-                Email
-              </label>
-              <div className="flex items-center border border-gray-300 rounded-2xl px-4 h-14">
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                className="w-full ml-3 outline-none text-gray-600"
-                placeholder="Enter your email"
-              />
-              </div>
-            </div> */}
-
+      
             <div className="mb-6">
               <label
                 htmlFor="phoneNumber"
@@ -221,19 +209,6 @@ const Testing = () => {
                 />
               </div>
             </div>
-            {/* <div>
-              <label htmlFor="phoneNumber" className="text-sm text-black">
-                Phone Number
-              </label>
-              <input
-                id="phoneNumber"
-                type="tel"
-                value={phoneNumber}
-                onChange={(event) => setPhoneNumber(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Enter your phone number"
-              />
-            </div> */}
 
             <div className="mb-6">
               <label
@@ -257,23 +232,7 @@ const Testing = () => {
                 ))}
               </div>
             </div>
-
-            {/* <div>
-              <label htmlFor="pin" className="text-sm text-black">
-                Create a 4-digit PIN
-              </label>
-              <input
-                id="pin"
-                type="password"
-                inputMode="numeric"
-                pattern="\d{4}"
-                maxLength={4}
-                value={pin}
-                onChange={(event) => setPin(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Enter 4 digits"
-              />
-            </div> */}
+          
 
             <div>
               <label
@@ -298,23 +257,6 @@ const Testing = () => {
               </div>
             </div>
 
-            {/* <div>
-              <label htmlFor="confirmPin" className="text-sm text-black">
-                Confirm your PIN
-              </label>
-              <input
-                id="confirmPin"
-                type="password"
-                inputMode="numeric"
-                pattern="\d{4}"
-                maxLength={4}
-                value={confirmPin}
-                onChange={(event) => setConfirmPin(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Re-enter 4 digits"
-              />
-            </div> */}
-
             <button
               type="submit"
               disabled={isSubmitting}
@@ -325,8 +267,11 @@ const Testing = () => {
 
             <p className="mt-4 text-sm text-gray-600">
               Already have an account?{" "}
-              <Link href="/login" className="font-medium text-red-600 underline">
-                Sign In 
+              <Link
+                href="/login"
+                className="font-medium text-red-600 underline"
+              >
+                Sign In
               </Link>
             </p>
           </form>
