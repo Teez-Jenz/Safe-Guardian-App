@@ -56,10 +56,14 @@ export async function POST(request: NextRequest) {
   const requestBody: unknown = await request.json().catch(() => null);
 
   if (!requestBody || typeof requestBody !== "object") {
-    return NextResponse.json({ error: "Invalid session payload." }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid session payload." },
+      { status: 400 },
+    );
   }
 
-  const { userId, name, email, phoneNumber } = requestBody as SessionRequestBody;
+  const { userId, name, email, phoneNumber } =
+    requestBody as SessionRequestBody;
 
   if (
     (typeof userId !== "string" && typeof userId !== "number") ||

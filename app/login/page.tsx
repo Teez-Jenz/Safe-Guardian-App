@@ -19,7 +19,7 @@ type UserRecord = {
   id: string | number;
   name: string | null;
   email: string | null;
-  phoneNumber: string;
+  phone_number: string;
 };
 const PIN_LENGTH = 4;
 
@@ -73,7 +73,7 @@ const LoginPage = () => {
         userId: user.id,
         name: user.name ?? "",
         email: user.email ?? "",
-        phoneNumber: user.phoneNumber,
+        phoneNumber: user.phone_number,
       }),
     });
 
@@ -103,9 +103,9 @@ const LoginPage = () => {
 
     const { data, error } = await supabase
       .from("users")
-      .select("id, name, email, phoneNumber")
-      .eq("phoneNumber", trimmedPhoneNumber)
-      .eq("pin", pin)
+      .select("id, name, email, phone_number")
+      .eq("phone_number", trimmedPhoneNumber)
+      .eq("pin_hash", pin)
       .maybeSingle<UserRecord>();
 
     if (error) {
@@ -242,7 +242,10 @@ const LoginPage = () => {
 
             <p className="mt-4 text-sm text-gray-600">
               Need an account?{" "}
-              <Link href="/signin" className="font-medium text-black underline">
+              <Link
+                href="/signin"
+                className="font-medium text-red-600 underline"
+              >
                 Sign In
               </Link>
             </p>

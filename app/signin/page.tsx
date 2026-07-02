@@ -2,22 +2,63 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { LuShield } from "react-icons/lu";
 import { CiMail } from "react-icons/ci";
 import { CiUser } from "react-icons/ci";
 import { CiPhone } from "react-icons/ci";
+import { AiOutlineEye, AiOutlineEyeInvisible } from "react-icons/ai";
 
 const Testing = () => {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
-  const [pin, setPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
+  const [pin, setPin] = useState(["", "", "", ""]);
+  const [confirmPin, setConfirmPin] = useState(["", "", "", ""]);
+  const [showPin, setShowPin] = useState(false);
+  const [showConfirmPin, setShowConfirmPin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const pinRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const confirmPinRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const handleDigitChange = (
+    index: number,
+    rawValue: string,
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    refs: React.MutableRefObject<(HTMLInputElement | null)[]>,
+  ) => {
+    const digit = rawValue.replace(/\D/g, "").slice(-1);
+    setter((prev) => {
+      const next = [...prev];
+      next[index] = digit;
+      return next;
+    });
+    if (digit && index < 3) {
+      refs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleDigitKeyDown = (
+    index: number,
+    e: React.KeyboardEvent<HTMLInputElement>,
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    refs: React.MutableRefObject<(HTMLInputElement | null)[]>,
+  ) => {
+    if (e.key === "Backspace") {
+      setter((prev) => {
+        const next = [...prev];
+        next[index] = "";
+        return next;
+      });
+      if (index > 0) {
+        refs.current[index - 1]?.focus();
+      }
+    }
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -26,13 +67,15 @@ const Testing = () => {
     const trimmedName = name.trim();
     const trimmedEmail = email.trim().toLowerCase();
     const trimmedPhoneNumber = phoneNumber.trim();
+    const pinString = pin.join("");
+    const confirmPinString = confirmPin.join("");
 
     if (
       !trimmedName ||
       !trimmedEmail ||
       !trimmedPhoneNumber ||
-      !pin ||
-      !confirmPin
+      pinString.length < 4 ||
+      confirmPinString.length < 4
     ) {
       setErrorMessage("Please fill in all required fields.");
       return;
@@ -43,23 +86,17 @@ const Testing = () => {
       return;
     }
 
-    if (!/^\d{4}$/.test(pin)) {
-      setErrorMessage("PIN must be exactly 4 digits.");
-      return;
-    }
-
-    if (pin !== confirmPin) {
+    if (pinString !== confirmPinString) {
       setErrorMessage("PIN and Confirm PIN do not match.");
       return;
     }
 
     setIsSubmitting(true);
 
-    const { data: existingUser, error: existingUserError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("phoneNumber", trimmedPhoneNumber)
-      .maybeSingle();
+    const { data: existingUser, error: existingUserError } = await supabase.rpc(
+      "check_phone_exists",
+      { input_phone: trimmedPhoneNumber },
+    );
 
     if (existingUserError) {
       console.error(existingUserError);
@@ -78,8 +115,8 @@ const Testing = () => {
       {
         name: trimmedName,
         email: trimmedEmail,
-        phoneNumber: trimmedPhoneNumber,
-        pin,
+        phone_number: trimmedPhoneNumber,
+        pin_hash: pinString,
       },
     ]);
 
@@ -94,6 +131,9 @@ const Testing = () => {
     router.refresh();
   };
 
+  const pinInputClass =
+    "w-14 h-14 border border-gray-300 rounded-2xl text-center text-xl outline-none focus:border-blue-500 text-gray-800";
+
   return (
     <main className="w-full">
       <div
@@ -106,7 +146,6 @@ const Testing = () => {
         <div className="mb-4 rounded-2xl bg-red-500/80 p-5 shadow-lg">
           <LuShield className="text-5xl text-white" />
         </div>
-
         <h1 className="text-2xl font-bold text-white pt-1">
           SafeAlert Guardian
         </h1>
@@ -119,18 +158,18 @@ const Testing = () => {
             onSubmit={handleSubmit}
             className="bg-white p-8 rounded-md shadow-lg"
           >
-            {errorMessage ? (
-              <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {errorMessage && (
+              <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 mb-4">
                 {errorMessage}
               </p>
-            ) : null}
+            )}
 
             <div>
               <h2 className="text-2xl font-semibold text-black">
                 Create Account
               </h2>
               <p className="text-sm text-gray-600 pb-4">
-                Sign up to stay safe with SSafeAlert Guardian
+                Sign up to stay safe with SafeAlert Guardian
               </p>
             </div>
 
@@ -141,31 +180,18 @@ const Testing = () => {
               >
                 Full Name
               </label>
-
               <div className="flex items-center border border-gray-300 rounded-2xl px-4 h-14">
                 <CiUser size={18} className="text-gray-400" />
                 <input
                   id="name"
                   type="text"
                   value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(e) => setName(e.target.value)}
                   placeholder="Amara Johnson"
                   className="w-full ml-3 outline-none text-gray-600"
                 />
               </div>
             </div>
-            {/* <label htmlFor="name" className="text-sm text-black">
-                Name
-              </label>
-              <input
-                id="name"
-                type="text"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                className="mt-1 w-full rounded-md border border-gray-300 p-2 text-black"
-                placeholder="Enter your full name"
-              />
-            </div> */}
 
             <div className="mb-5">
               <label
@@ -174,21 +200,19 @@ const Testing = () => {
               >
                 Email Address
               </label>
-
               <div className="flex items-center border border-gray-300 rounded-2xl px-4 h-14">
                 <CiMail size={18} className="text-gray-400" />
                 <input
                   id="email"
                   type="email"
                   value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="amara@email.com"
                   className="w-full ml-3 outline-none text-gray-600"
                 />
               </div>
             </div>
 
-      
             <div className="mb-6">
               <label
                 htmlFor="phoneNumber"
@@ -196,62 +220,114 @@ const Testing = () => {
               >
                 Phone Number
               </label>
-
               <div className="flex items-center border border-gray-300 rounded-2xl px-4 h-14">
                 <CiPhone size={18} className="text-gray-400" />
                 <input
                   id="phoneNumber"
                   type="tel"
                   value={phoneNumber}
-                  onChange={(event) => setPhoneNumber(event.target.value)}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
                   placeholder="+234 800 000 0000"
                   className="w-full ml-3 outline-none text-gray-600"
                 />
               </div>
             </div>
 
+            {/* PIN */}
             <div className="mb-6">
-              <label
-                htmlFor="pin"
-                className="block text-sm font-semibold text-gray-700 mb-3"
-              >
-                Create a 4-digit PIN
-              </label>
-
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-semibold text-gray-700">
+                  Create a 4-digit PIN
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowPin((prev) => !prev)}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  {showPin ? (
+                    <>
+                      <AiOutlineEyeInvisible size={16} /> Hide
+                    </>
+                  ) : (
+                    <>
+                      <AiOutlineEye size={16} /> Show
+                    </>
+                  )}
+                </button>
+              </div>
               <div className="flex gap-3">
-                {[1, 2, 3, 4].map((item) => (
+                {pin.map((digit, index) => (
                   <input
-                    key={item}
-                    id="pin"
-                    type="password"
+                    key={index}
+                    ref={(el) => {
+                      pinRefs.current[index] = el;
+                    }}
+                    type={showPin ? "text" : "password"}
+                    inputMode="numeric"
                     maxLength={1}
-                    value={pin}
-                    onChange={(event) => setPin(event.target.value)}
-                    className="w-14 h-14 border border-gray-300 rounded-2xl text-center text-xl outline-none focus:border-blue-500"
+                    value={digit}
+                    onChange={(e) =>
+                      handleDigitChange(index, e.target.value, setPin, pinRefs)
+                    }
+                    onKeyDown={(e) =>
+                      handleDigitKeyDown(index, e, setPin, pinRefs)
+                    }
+                    className={pinInputClass}
                   />
                 ))}
               </div>
             </div>
-          
 
-            <div>
-              <label
-                htmlFor="confirmPin"
-                className="block text-sm font-semibold text-gray-700 mb-3"
-              >
-                Confirm PIN
-              </label>
-
+            {/* Confirm PIN */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-semibold text-gray-700">
+                  Confirm PIN
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPin((prev) => !prev)}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+                >
+                  {showConfirmPin ? (
+                    <>
+                      <AiOutlineEyeInvisible size={16} /> Hide
+                    </>
+                  ) : (
+                    <>
+                      <AiOutlineEye size={16} /> Show
+                    </>
+                  )}
+                </button>
+              </div>
               <div className="flex gap-3">
-                {[1, 2, 3, 4].map((item) => (
+                {confirmPin.map((digit, index) => (
                   <input
-                    key={item}
-                    id="confirmPin"
-                    type="password"
+                    key={index}
+                    ref={(el) => {
+                      confirmPinRefs.current[index] = el;
+                    }}
+                    type={showConfirmPin ? "text" : "password"}
+                    inputMode="numeric"
                     maxLength={1}
-                    value={confirmPin}
-                    onChange={(event) => setConfirmPin(event.target.value)}
-                    className="w-14 h-14 border border-gray-300 rounded-2xl text-center text-xl outline-none focus:border-blue-500"
+                    value={digit}
+                    onChange={(e) =>
+                      handleDigitChange(
+                        index,
+                        e.target.value,
+                        setConfirmPin,
+                        confirmPinRefs,
+                      )
+                    }
+                    onKeyDown={(e) =>
+                      handleDigitKeyDown(
+                        index,
+                        e,
+                        setConfirmPin,
+                        confirmPinRefs,
+                      )
+                    }
+                    className={pinInputClass}
                   />
                 ))}
               </div>
@@ -282,12 +358,10 @@ const Testing = () => {
             <span className="text-xl">🔒</span>
             <p className="text-xs text-gray-500 mt-1">Encrypted</p>
           </div>
-
           <div className="flex flex-col items-center">
             <span className="text-xl">📍</span>
             <p className="text-xs text-gray-500 mt-1">GPS-Enabled</p>
           </div>
-
           <div className="flex flex-col items-center">
             <span className="text-xl">🚨</span>
             <p className="text-xs text-gray-500 mt-1">24/7 Alert</p>

@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 type Contact = {
   name: string;
+  email: string;
   phoneNumber: string;
   relationship: string;
 };
@@ -12,6 +13,7 @@ type Contact = {
 const ContactsPage = () => {
   const [name, setName] = useState("");
   const [phoneNumber, setPhoneNumber] = useState("");
+  const [email, setEmail] = useState("");
   const [relationship, setRelationship] = useState("");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoadingContacts, setIsLoadingContacts] = useState(true);
@@ -22,7 +24,7 @@ const ContactsPage = () => {
     const fetchContacts = async () => {
       const { data, error } = await supabase
         .from("contacts")
-        .select("name, phoneNumber, relationship");
+        .select("name, email, phone_number, relationship");
 
       if (error) {
         console.error(error);
@@ -31,7 +33,14 @@ const ContactsPage = () => {
         return;
       }
 
-      setContacts(data ?? []);
+      setContacts(
+        (data ?? []).map((contact) => ({
+          name: contact.name,
+          email: contact.email,
+          phoneNumber: contact.phone_number,
+          relationship: contact.relationship,
+        })),
+      );
       setIsLoadingContacts(false);
     };
 
@@ -43,6 +52,7 @@ const ContactsPage = () => {
     setErrorMessage("");
 
     const trimmedName = name.trim();
+    const trimmedEmail = email.trim();
     const trimmedPhoneNumber = phoneNumber.trim();
     const trimmedRelationship = relationship.trim();
 
@@ -57,11 +67,12 @@ const ContactsPage = () => {
       .insert([
         {
           name: trimmedName,
-          phoneNumber: trimmedPhoneNumber,
+          email: trimmedEmail,
+          phone_number: trimmedPhoneNumber,
           relationship: trimmedRelationship,
         },
       ])
-      .select("name, phoneNumber, relationship")
+      .select("name, email, phone_number, relationship")
       .single();
 
     if (error) {
@@ -72,10 +83,19 @@ const ContactsPage = () => {
     }
 
     if (data) {
-      setContacts((previousContacts) => [data, ...previousContacts]);
+      setContacts((previousContacts) => [
+        {
+          name: data.name,
+          email: data.email,
+          phoneNumber: data.phone_number,
+          relationship: data.relationship,
+        },
+        ...previousContacts,
+      ]);
     }
 
     setName("");
+    setEmail("");
     setPhoneNumber("");
     setRelationship("");
     setIsSubmitting(false);
@@ -83,8 +103,8 @@ const ContactsPage = () => {
 
   return (
     <main className="w-full h-full p-8 bg-gray-50">
-      <section className="w-full h-full bg-white border-2 border-gray-300 rounded-lg p-5">
-        <h1 className="text-black font-medium text-2xl">
+      <section className="w-full h-full bg-white border-2 border-gray-300 rounded-xl p-5">
+        <h1 className="text-black font-semibold text-2xl">
           Add Trusted Contacts
         </h1>
         <span className="text-gray-500">
@@ -94,7 +114,7 @@ const ContactsPage = () => {
           {errorMessage ? (
             <p className="mt-4 text-sm text-red-600">{errorMessage}</p>
           ) : null}
-          <label htmlFor="name" className="block text-black mt-4">
+          <label htmlFor="name" className="block text-black mt-4 font-semibold">
             Name
           </label>
           <input
@@ -102,11 +122,30 @@ const ContactsPage = () => {
             id="name"
             value={name}
             onChange={(event) => setName(event.target.value)}
-            className="w-full border-2 border-gray-300 rounded-lg p-2 mt-1 placeholder:text-gray-500"
+            className="w-full border-2 border-gray-300 text-black rounded-lg p-2 mt-1 placeholder:text-gray-500"
             placeholder="Enter contact name"
           />
 
-          <label htmlFor="phone" className="block mt-4 text-black">
+          <label
+            htmlFor="email"
+            className="block mt-4 text-black font-semibold"
+          >
+            Email Address
+          </label>
+
+          <input
+            type="email"
+            id="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="w-full border-2 border-gray-300 text-black rounded-lg p-2 mt-1 placeholder:text-gray-500"
+            placeholder="Enter contact email"
+          />
+
+          <label
+            htmlFor="phone"
+            className="block mt-4 text-black font-semibold"
+          >
             Phone Number
           </label>
           <input
@@ -114,11 +153,14 @@ const ContactsPage = () => {
             id="phone"
             value={phoneNumber}
             onChange={(event) => setPhoneNumber(event.target.value)}
-            className="w-full border-2 border-gray-300 rounded-lg p-2 mt-1 placeholder:text-gray-500"
+            className="w-full border-2 border-gray-300 text-black rounded-lg p-2 mt-1 placeholder:text-gray-500"
             placeholder="Enter contact phone number"
           />
 
-          <label htmlFor="relationship" className="block mt-4 text-black">
+          <label
+            htmlFor="relationship"
+            className="block mt-4 text-black font-semibold"
+          >
             Relationship
           </label>
           <input
@@ -126,14 +168,14 @@ const ContactsPage = () => {
             id="relationship"
             value={relationship}
             onChange={(event) => setRelationship(event.target.value)}
-            className="w-full border-2 border-gray-300 rounded-lg p-2 mt-1 placeholder:text-gray-500"
+            className="w-full border-2 border-gray-300 text-black rounded-lg p-2 mt-1 placeholder:text-gray-500"
             placeholder="Enter relationship (e.g., Family, Friend)"
           />
 
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-black text-white rounded-lg p-3 mt-6 hover:bg-black-100 transition duration-300 flex items-center justify-center gap-2"
+            className="w-full bg-red-600 text-white rounded-lg p-3 mt-6 hover:bg-black-100 transition duration-300 flex items-center justify-center gap-2"
           >
             <GoPersonAdd />
             {isSubmitting ? "Adding Contact..." : "Add Contact"}
@@ -146,9 +188,7 @@ const ContactsPage = () => {
         {isLoadingContacts ? (
           <p className="mt-4 text-gray-500">Loading emergency contacts...</p>
         ) : contacts.length === 0 ? (
-          <p className="mt-4 text-gray-500">
-            No emergency contacts added yet.
-          </p>
+          <p className="mt-4 text-gray-500">No emergency contacts added yet.</p>
         ) : (
           <ul className="mt-4 space-y-3">
             {contacts.map((contact, index) => (
@@ -157,6 +197,7 @@ const ContactsPage = () => {
                 className="rounded-lg border border-gray-200 bg-gray-50 p-4"
               >
                 <p className="font-semibold text-black">{contact.name}</p>
+                <p className="text-sm text-gray-700">{contact.email}</p>
                 <p className="text-sm text-gray-700">{contact.phoneNumber}</p>
                 <p className="text-sm text-gray-600">{contact.relationship}</p>
               </li>

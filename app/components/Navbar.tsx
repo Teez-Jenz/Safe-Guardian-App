@@ -77,7 +77,7 @@ const Navbar = () => {
           </Link>
         </li>
         <li>
-          <Link href="#" className={baseLinkClass}>
+          <Link href="/emergency" className={baseLinkClass}>
             <LuPhoneCall />
             <span>Emergency Call</span>
           </Link>
