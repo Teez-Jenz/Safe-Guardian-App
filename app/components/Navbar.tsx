@@ -7,7 +7,7 @@ import { GoPeople } from "react-icons/go";
 import { LuPhoneCall } from "react-icons/lu";
 import { GrLocation } from "react-icons/gr";
 import { LuShield } from "react-icons/lu";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const baseLinkClass =
@@ -15,7 +15,6 @@ const baseLinkClass =
 
 const Navbar = () => {
   const pathname = usePathname();
-  const router = useRouter();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const hideNavbar = ["/login", "/signin", "/signup"].some((route) =>
     pathname.startsWith(route),
@@ -36,12 +35,11 @@ const Navbar = () => {
       console.error(error);
     }
 
-    router.push("/login");
-    router.refresh();
+    window.location.href = "/login";
   };
   return (
     <header className="w-full border-b-2 border-black bg-white">
-      <nav className="flex min-h-16 w-full items-center justify-between px-50 sm:px-6">
+      <nav className="flex min-h-16 w-full items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-2">
           <FaShield className="text-xl text-red-600" />
           <h1 className="text-lg font-semibold tracking-tight text-red-600">
@@ -83,13 +81,13 @@ const Navbar = () => {
           </Link>
         </li>
         <li>
-          <Link href="#" className={baseLinkClass}>
+          <Link href="/location" className={baseLinkClass}>
             <GrLocation />
             <span>Location</span>
           </Link>
         </li>
         <li>
-          <Link href="#" className={baseLinkClass}>
+          <Link href="/checkIn" className={baseLinkClass}>
             <LuShield />
             <span>Check in</span>
           </Link>

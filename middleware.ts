@@ -8,7 +8,15 @@ export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Protected routes
-  const protectedRoutes = ["/", "/dashboard", "/profile", "/contacts"];
+  const protectedRoutes = [
+    "/",
+    "/dashboard",
+    "/profile",
+    "/contacts",
+    "/emergency",
+    "/location",
+    "/checkIn",
+  ];
 
   const isProtectedRoute = protectedRoutes.some((route) =>
     pathname.startsWith(route),
@@ -22,5 +30,16 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*", "/profile/:path*", "/contacts/:path*"],
+  matcher: [
+    "/",
+    "/dashboard/:path*",
+    "/profile/:path*",
+    "/contacts/:path*",
+    "/emergency/:path*",
+    "/location/:path*",
+    "/checkIn/:path*",
+    "/emergency",
+    "/location",
+    "/checkIn",
+  ],
 };

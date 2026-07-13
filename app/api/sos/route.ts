@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
 
                   <!-- Map Button -->
                   <div style="text-align: center; margin: 24px 0;">
-                    
+                    <a
                       href="${googleMapsLink}"
                       target="_blank"
                       style="background-color: #dc2626; color: #ffffff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 15px; display: inline-block;"

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { GrLocation } from "react-icons/gr";
 import { MdCancel } from "react-icons/md";
+import { useSafety } from "./context/SafetyContext";
 
 interface Location {
   latitude: number;
@@ -12,9 +13,106 @@ interface Location {
   address?: string;
 }
 
+const OVERPASS_ENDPOINTS = [
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter", // ✅ works
+  "https://overpass.kumi.systems/api/interpreter", // fallback
+];
+
+interface OverpassElement {
+  tags?: {
+    name?: string;
+    "addr:street"?: string;
+    "addr:housenumber"?: string;
+    "addr:suburb"?: string;
+    "addr:city"?: string;
+    highway?: string;
+    place?: string;
+  };
+}
+
+const getAddress = async (lat: number, lon: number): Promise<string> => {
+  const query = `
+    [out:json][timeout:15];
+    (
+      way(around:150, ${lat}, ${lon})["highway"]["name"];
+      node(around:150, ${lat}, ${lon})["addr:street"];
+      node(around:300, ${lat}, ${lon})["place"];
+    );
+    out tags;
+  `;
+
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `data=${encodeURIComponent(query)}`,
+      });
+
+      if (!response.ok) continue;
+
+      const data = await response.json() as { elements?: OverpassElement[] };
+      if (!data || !data.elements || data.elements.length === 0) continue;
+
+      const elements = data.elements.filter((el): el is OverpassElement & { tags: NonNullable<OverpassElement["tags"]> } => !!el.tags);
+      
+      const withHouse = elements.find((el) => el.tags["addr:street"] && el.tags["addr:housenumber"]);
+      if (withHouse) {
+        const parts = [
+          withHouse.tags["addr:housenumber"],
+          withHouse.tags["addr:street"],
+          withHouse.tags["addr:suburb"] || withHouse.tags["addr:city"]
+        ].filter(Boolean);
+        return parts.join(", ");
+      }
+
+      const withStreet = elements.find((el) => el.tags["addr:street"]);
+      if (withStreet) {
+        const parts = [
+          withStreet.tags["addr:street"],
+          withStreet.tags["addr:suburb"] || withStreet.tags["addr:city"]
+        ].filter(Boolean);
+        return parts.join(", ");
+      }
+
+      const withHighway = elements.find((el) => el.tags.highway && el.tags.name);
+      if (withHighway && withHighway.tags.name) {
+        return withHighway.tags.name;
+      }
+
+      const withPlace = elements.find((el) => el.tags.place && el.tags.name);
+      if (withPlace && withPlace.tags.name) {
+        return withPlace.tags.name;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch address from Overpass endpoint:", endpoint, err);
+    }
+  }
+
+  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+};
+
+const fetchLocation = (): Promise<Location> => {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Geolocation is not supported by your browser."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        const address = await getAddress(latitude, longitude);
+        resolve({ latitude, longitude, accuracy, address });
+      },
+      (error) => reject(new Error(error.message)),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+};
+
 const Page = () => {
   const [userName, setUserName] = useState("");
-  const [sosActive, setSosActive] = useState(false);
+  const { sosActive, startSos, stopSos } = useSafety();
   const [location, setLocation] = useState<Location | null>(null);
   const [locationError, setLocationError] = useState("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
@@ -25,64 +123,31 @@ const Page = () => {
     const getUser = async () => {
       const response = await fetch("/api/session");
       if (!response.ok) return;
-      const user = await response.json();
-      setUserName(user.name);
+      const data = await response.json();
+      setUserName(data.session?.name || "");
     };
     getUser();
   }, []);
 
-  const getAddress = async (lat: number, lon: number): Promise<string> => {
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`
-      );
-      const data = await res.json();
-      return data.display_name || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-    } catch {
-      return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  // Sync current location state when SOS mounts/activates
+  useEffect(() => {
+    if (sosActive && !location) {
+      const timer = setTimeout(() => {
+        setIsFetchingLocation(true);
+        fetchLocation()
+          .then((loc) => {
+            setLocation(loc);
+          })
+          .catch((err: unknown) => {
+            setLocationError(err instanceof Error ? err.message : "Unable to retrieve location.");
+          })
+          .finally(() => {
+            setIsFetchingLocation(false);
+          });
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  };
-
-  const fetchLocation = (): Promise<Location> => {
-    return new Promise((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error("Geolocation is not supported by your browser."));
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude, accuracy } = position.coords;
-          const address = await getAddress(latitude, longitude);
-          resolve({ latitude, longitude, accuracy, address });
-        },
-        (error) => reject(new Error(error.message)),
-        { enableHighAccuracy: true, timeout: 10000 }
-      );
-    });
-  };
-
-  const sendSosToContacts = async (loc: Location) => {
-    try {
-      const sessionRes = await fetch("/api/session");
-      if (!sessionRes.ok) return;
-      const user = await sessionRes.json();
-
-      await fetch("/api/sos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.id,
-          location: {
-            latitude: loc.latitude,
-            longitude: loc.longitude,
-            address: loc.address,
-          },
-        }),
-      });
-    } catch (err) {
-      console.error("Failed to send SOS to contacts:", err);
-    }
-  };
+  }, [sosActive, location]);
 
   const handleSosClick = async () => {
     if (sosActive) return;
@@ -93,20 +158,21 @@ const Page = () => {
     try {
       const loc = await fetchLocation();
       setLocation(loc);
-      setSosActive(true);
       setIsSending(true);
-      await sendSosToContacts(loc);
+      await startSos(loc);
       setAlertMessage("SOS alert sent to your trusted contacts.");
-    } catch (err: any) {
-      setLocationError(err.message || "Unable to retrieve location.");
+    } catch (err: unknown) {
+      setLocationError(
+        err instanceof Error ? err.message : "Unable to retrieve location."
+      );
     } finally {
       setIsFetchingLocation(false);
       setIsSending(false);
     }
   };
 
-  const handleCancel = () => {
-    setSosActive(false);
+  const handleCancel = async () => {
+    await stopSos();
     setLocation(null);
     setAlertMessage("");
     setLocationError("");

@@ -32,7 +32,7 @@ const emergencyContacts = [
 
 export default function EmergencyContacts() {
   const callNumber = (number: string) => {
-    window.location.href = `tel:${number}`;
+    window.location.assign(`tel:${number}`);
   };
 
   return (

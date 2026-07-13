@@ -22,26 +22,45 @@ const ContactsPage = () => {
 
   useEffect(() => {
     const fetchContacts = async () => {
-      const { data, error } = await supabase
-        .from("contacts")
-        .select("name, email, phone_number, relationship");
+      try {
+        const sessionRes = await fetch("/api/session");
+        if (!sessionRes.ok) {
+          setIsLoadingContacts(false);
+          return;
+        }
+        const sessionData = await sessionRes.json();
+        const userId = sessionData.session?.userId;
+        if (!userId) {
+          setIsLoadingContacts(false);
+          return;
+        }
 
-      if (error) {
-        console.error(error);
+        const { data, error } = await supabase
+          .from("contacts")
+          .select("name, email, phone_number, relationship")
+          .eq("user_id", userId);
+
+        if (error) {
+          console.error(error);
+          setErrorMessage("Failed to load emergency contacts.");
+          setIsLoadingContacts(false);
+          return;
+        }
+
+        setContacts(
+          (data ?? []).map((contact) => ({
+            name: contact.name,
+            email: contact.email,
+            phoneNumber: contact.phone_number,
+            relationship: contact.relationship,
+          })),
+        );
+      } catch (err) {
+        console.error(err);
         setErrorMessage("Failed to load emergency contacts.");
+      } finally {
         setIsLoadingContacts(false);
-        return;
       }
-
-      setContacts(
-        (data ?? []).map((contact) => ({
-          name: contact.name,
-          email: contact.email,
-          phoneNumber: contact.phone_number,
-          relationship: contact.relationship,
-        })),
-      );
-      setIsLoadingContacts(false);
     };
 
     fetchContacts();
@@ -62,43 +81,65 @@ const ContactsPage = () => {
     }
 
     setIsSubmitting(true);
-    const { data, error } = await supabase
-      .from("contacts")
-      .insert([
-        {
-          name: trimmedName,
-          email: trimmedEmail,
-          phone_number: trimmedPhoneNumber,
-          relationship: trimmedRelationship,
-        },
-      ])
-      .select("name, email, phone_number, relationship")
-      .single();
 
-    if (error) {
-      console.error(error);
-      setErrorMessage("Failed to save contact.");
+    try {
+      const sessionRes = await fetch("/api/session");
+      if (!sessionRes.ok) {
+        setErrorMessage("You must be logged in to add a contact.");
+        setIsSubmitting(false);
+        return;
+      }
+      const sessionData = await sessionRes.json();
+      const userId = sessionData.session?.userId;
+      if (!userId) {
+        setErrorMessage("You must be logged in to add a contact.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("contacts")
+        .insert([
+          {
+            user_id: userId,
+            name: trimmedName,
+            email: trimmedEmail,
+            phone_number: trimmedPhoneNumber,
+            relationship: trimmedRelationship,
+          },
+        ])
+        .select("name, email, phone_number, relationship")
+        .single();
+
+      if (error) {
+        console.error(error);
+        setErrorMessage("Failed to save contact.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      if (data) {
+        setContacts((previousContacts) => [
+          {
+            name: data.name,
+            email: data.email,
+            phoneNumber: data.phone_number,
+            relationship: data.relationship,
+          },
+          ...previousContacts,
+        ]);
+      }
+
+      setName("");
+      setEmail("");
+      setPhoneNumber("");
+      setRelationship("");
+    } catch (err) {
+      console.error(err);
+      setErrorMessage("An unexpected error occurred.");
+    } finally {
       setIsSubmitting(false);
-      return;
     }
-
-    if (data) {
-      setContacts((previousContacts) => [
-        {
-          name: data.name,
-          email: data.email,
-          phoneNumber: data.phone_number,
-          relationship: data.relationship,
-        },
-        ...previousContacts,
-      ]);
-    }
-
-    setName("");
-    setEmail("");
-    setPhoneNumber("");
-    setRelationship("");
-    setIsSubmitting(false);
   };
 
   return (
@@ -175,7 +216,7 @@ const ContactsPage = () => {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-red-600 text-white rounded-lg p-3 mt-6 hover:bg-black-100 transition duration-300 flex items-center justify-center gap-2"
+            className="w-full bg-red-600 text-white rounded-lg p-3 mt-6 hover:bg-red-700 transition duration-300 flex items-center justify-center gap-2"
           >
             <GoPersonAdd />
             {isSubmitting ? "Adding Contact..." : "Add Contact"}

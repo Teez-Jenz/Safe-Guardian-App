@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Dispatch,
   FormEvent,
@@ -24,7 +23,6 @@ type UserRecord = {
 const PIN_LENGTH = 4;
 
 const LoginPage = () => {
-  const router = useRouter();
   const [phoneNumber, setPhoneNumber] = useState("");
   const [pinDigits, setPinDigits] = useState<string[]>(
     Array(PIN_LENGTH).fill(""),
@@ -130,8 +128,7 @@ const LoginPage = () => {
       return;
     }
 
-    router.push("/");
-    router.refresh();
+    window.location.href = "/";
   };
 
   return (

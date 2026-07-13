@@ -10,7 +10,7 @@ import { CiUser } from "react-icons/ci";
 import { CiPhone } from "react-icons/ci";
 import { AiOutlineEye, AiOutlineEyeInvisible } from "react-icons/ai";
 
-const Testing = () => {
+const SignupPage = () => {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -372,4 +372,4 @@ const Testing = () => {
   );
 };
 
-export default Testing;
+export default SignupPage;
