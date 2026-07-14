@@ -134,7 +134,7 @@ const Page = () => {
   const [location, setLocation] = useState<Location | null>(null);
   const [locationError, setLocationError] = useState("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-  const [isFetchingAddress, setIsFetchingAddress] = useState<boolean>(false);
+
   const [isSending, setIsSending] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
 
@@ -176,10 +176,10 @@ const Page = () => {
 
     try {
       const loc = await fetchLocation((address) => {
-        setLocation((prev) => (prev ? { ...prev, address } : prev));
+        // Use functional update; fall back to loc from closure if prev is null
+        setLocation((prev) => ({ ...(prev ?? loc), address }));
       });
       setLocation(loc);
-      setIsFetchingAddress(true);
       setIsSending(true);
       await startSos(loc); // fires immediately, doesn't wait on address
       setAlertMessage("SOS alert sent to your trusted contacts.");
@@ -282,8 +282,10 @@ const Page = () => {
 
             {location && !isFetchingLocation && (
               <div className="mt-1 text-sm text-gray-700 space-y-1">
-                {location.address && (
+                {location.address ? (
                   <p className="font-medium text-gray-800">{location.address}</p>
+                ) : (
+                  <p className="text-gray-400 italic text-xs animate-pulse">Resolving address...</p>
                 )}
                 <p className="text-gray-500">
                   Lat: {location.latitude.toFixed(6)}, Lon: {location.longitude.toFixed(6)}
