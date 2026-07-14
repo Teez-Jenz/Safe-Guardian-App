@@ -15,96 +15,68 @@ interface Location {
 
 type AddressCallback = (address: string) => void;
 
-const OVERPASS_ENDPOINTS = [
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter", // ✅ works
-  "https://overpass.kumi.systems/api/interpreter", // fallback
-];
-
-interface OverpassElement {
-  tags?: {
-    name?: string;
-    "addr:street"?: string;
-    "addr:housenumber"?: string;
-    "addr:suburb"?: string;
-    "addr:city"?: string;
-    highway?: string;
-    place?: string;
-  };
+interface NominatimAddress {
+  house_number?: string;
+  road?: string;
+  pedestrian?: string;
+  footway?: string;
+  suburb?: string;
+  neighbourhood?: string;
+  quarter?: string;
+  city?: string;
+  town?: string;
+  village?: string;
+  county?: string;
 }
 
-// Add a real per-request timeout using AbortController
+interface NominatimResponse {
+  address?: NominatimAddress;
+  display_name?: string;
+}
+
+// Reverse geocode using Nominatim (OSM's dedicated reverse geocoding API)
 const getAddress = async (lat: number, lon: number): Promise<string> => {
-  const query = `
-    [out:json][timeout:15];
-    (
-      way(around:150, ${lat}, ${lon})["highway"]["name"];
-      node(around:150, ${lat}, ${lon})["addr:street"];
-      node(around:300, ${lat}, ${lon})["place"];
-    );
-    out tags;
-  `;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(query)}`,
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`,
+      {
+        headers: {
+          "Accept-Language": "en",
+          "User-Agent": "SafeGuardianApp/1.0",
+        },
         signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) continue;
-
-      const data = (await response.json()) as { elements?: OverpassElement[] };
-      if (!data || !data.elements || data.elements.length === 0) continue;
-
-      const elements = data.elements.filter(
-        (el): el is OverpassElement & { tags: NonNullable<OverpassElement["tags"]> } =>
-          !!el.tags
-      );
-
-      const withHouse = elements.find(
-        (el) => el.tags["addr:street"] && el.tags["addr:housenumber"]
-      );
-      if (withHouse) {
-        const parts = [
-          withHouse.tags["addr:housenumber"],
-          withHouse.tags["addr:street"],
-          withHouse.tags["addr:suburb"] || withHouse.tags["addr:city"],
-        ].filter(Boolean);
-        return parts.join(", ");
       }
+    );
+    clearTimeout(timeoutId);
 
-      const withStreet = elements.find((el) => el.tags["addr:street"]);
-      if (withStreet) {
-        const parts = [
-          withStreet.tags["addr:street"],
-          withStreet.tags["addr:suburb"] || withStreet.tags["addr:city"],
-        ].filter(Boolean);
-        return parts.join(", ");
-      }
+    if (!response.ok) throw new Error("Nominatim request failed");
 
-      const withHighway = elements.find((el) => el.tags.highway && el.tags.name);
-      if (withHighway && withHighway.tags.name) {
-        return withHighway.tags.name;
-      }
+    const data = (await response.json()) as NominatimResponse;
+    const addr = data.address;
 
-      const withPlace = elements.find((el) => el.tags.place && el.tags.name);
-      if (withPlace && withPlace.tags.name) {
-        return withPlace.tags.name;
-      }
-    } catch (err) {
-      clearTimeout(timeoutId);
-      console.warn("Failed to fetch address from Overpass endpoint:", endpoint, err);
+    if (addr) {
+      const parts = [
+        addr.house_number,
+        addr.road || addr.pedestrian || addr.footway,
+        addr.suburb || addr.neighbourhood || addr.quarter,
+        addr.city || addr.town || addr.village || addr.county,
+      ].filter(Boolean);
+
+      if (parts.length > 0) return parts.join(", ");
     }
+
+    if (data.display_name) return data.display_name;
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.warn("Nominatim reverse geocoding failed:", err);
   }
 
   return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 };
+
 
 const fetchLocation = (onAddress?: AddressCallback): Promise<Location> => {
   return new Promise((resolve, reject) => {
