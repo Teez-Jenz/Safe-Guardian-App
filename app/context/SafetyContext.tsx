@@ -11,10 +11,26 @@ interface ActiveCheckIn {
   status: string;
 }
 
+export interface SosAlertResult {
+  success: boolean;
+  senderName?: string;
+  notifiedContactsCount: number;
+  emails: { sent: number; failed: number };
+  calls: { triggered: number; total: number };
+  location?: {
+    latitude: number;
+    longitude: number;
+    address: string;
+    googleMapsLink: string;
+  };
+  error?: string;
+}
+
 interface SafetyContextType {
   sosActive: boolean;
   activeCheckIn: ActiveCheckIn | null;
-  startSos: (coords: { latitude: number; longitude: number; address?: string }) => Promise<void>;
+  sosAlertResult: SosAlertResult | null;
+  startSos: (coords: { latitude: number; longitude: number; address?: string }) => Promise<SosAlertResult | null>;
   stopSos: () => Promise<void>;
   startCheckIn: (activity: string, duration: number) => Promise<void>;
   stopCheckIn: () => Promise<void>;
@@ -106,6 +122,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [userId, setUserId] = useState<string | null>(null);
   const [sosActive, setSosActive] = useState<boolean>(false);
   const [activeCheckIn, setActiveCheckIn] = useState<ActiveCheckIn | null>(null);
+  const [sosAlertResult, setSosAlertResult] = useState<SosAlertResult | null>(null);
 
   // 1. Initial State Load (from API session and LocalStorage/Database)
   useEffect(() => {
@@ -248,14 +265,23 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // 4. Action: Start SOS
-  const startSos = async (loc: { latitude: number; longitude: number; address?: string }) => {
+  const startSos = async (loc: { latitude: number; longitude: number; address?: string }): Promise<SosAlertResult | null> => {
     const curUserId = await getOrFetchUserId();
     if (!curUserId) {
       console.error("SOS failed: No active user session.");
-      return;
+      return null;
     }
     setSosActive(true);
     localStorage.setItem("sos_active", "true");
+
+    let finalAddress = loc.address;
+    if (!finalAddress) {
+      try {
+        finalAddress = await getAddressFromOverpass(loc.latitude, loc.longitude);
+      } catch {
+        finalAddress = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+      }
+    }
 
     try {
       // 1. Insert into public.sos_alerts (SOS history)
@@ -263,11 +289,11 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         user_id: curUserId,
         latitude: loc.latitude,
         longitude: loc.longitude,
-        address: loc.address || "",
+        address: finalAddress || "",
       });
 
-      // 2. Call local SOS API to notify trusted contacts via Resend
-      await fetch("/api/sos", {
+      // 2. Call local SOS API to notify trusted contacts via Resend and Twilio
+      const sosRes = await fetch("/api/sos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -275,10 +301,16 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           location: {
             latitude: loc.latitude,
             longitude: loc.longitude,
-            address: loc.address,
+            address: finalAddress,
           },
         }),
       });
+
+      let alertData: SosAlertResult | null = null;
+      if (sosRes.ok) {
+        alertData = await sosRes.json();
+        setSosAlertResult(alertData);
+      }
 
       // 3. Set safety status to danger
       await supabase.from("safety_status").upsert(
@@ -293,11 +325,14 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // 4. Log to route history
       await supabase.from("route_history").insert({
         user_id: curUserId,
-        label: `🚨 SOS Triggered - near ${loc.address || "coordinates"}`,
+        label: `🚨 SOS Triggered - near ${finalAddress || "coordinates"}`,
         recorded_at: new Date().toISOString(),
       });
+
+      return alertData;
     } catch (err) {
       console.error("Error triggering SOS state:", err);
+      return null;
     }
   };
 
@@ -306,6 +341,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     const curUserId = await getOrFetchUserId();
     if (!curUserId) return;
     setSosActive(false);
+    setSosAlertResult(null);
     localStorage.removeItem("sos_active");
 
     try {
@@ -419,6 +455,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       value={{
         sosActive,
         activeCheckIn,
+        sosAlertResult,
         startSos,
         stopSos,
         startCheckIn,

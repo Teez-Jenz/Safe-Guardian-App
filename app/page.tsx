@@ -4,13 +4,22 @@ import { useEffect, useState } from "react";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { GrLocation } from "react-icons/gr";
 import { MdCancel } from "react-icons/md";
+import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle } from "react-icons/fi";
 import { useSafety } from "./context/SafetyContext";
+import { supabase } from "@/lib/supabase";
 
 interface Location {
   latitude: number;
   longitude: number;
   accuracy: number;
   address?: string;
+}
+
+interface Contact {
+  name: string;
+  email: string;
+  phoneNumber: string;
+  relationship: string;
 }
 
 type AddressCallback = (address: string) => void;
@@ -77,7 +86,6 @@ const getAddress = async (lat: number, lon: number): Promise<string> => {
   return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 };
 
-
 const fetchLocation = (onAddress?: AddressCallback): Promise<Location> => {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -99,26 +107,48 @@ const fetchLocation = (onAddress?: AddressCallback): Promise<Location> => {
   });
 };
 
-
 const Page = () => {
   const [userName, setUserName] = useState("");
-  const { sosActive, startSos, stopSos } = useSafety();
+  const [contacts, setContacts] = useState<Contact[]>([]);
+  const { sosActive, sosAlertResult, startSos, stopSos, userId } = useSafety();
   const [location, setLocation] = useState<Location | null>(null);
   const [locationError, setLocationError] = useState("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
-
   const [isSending, setIsSending] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
 
   useEffect(() => {
-    const getUser = async () => {
-      const response = await fetch("/api/session");
-      if (!response.ok) return;
-      const data = await response.json();
-      setUserName(data.session?.name || "");
+    const getUserAndContacts = async () => {
+      try {
+        const response = await fetch("/api/session");
+        if (!response.ok) return;
+        const data = await response.json();
+        const curUserId = data.session?.userId;
+        setUserName(data.session?.name || "");
+
+        if (curUserId) {
+          const { data: contactsData } = await supabase
+            .from("contacts")
+            .select("name, email, phone_number, relationship")
+            .eq("user_id", curUserId);
+
+          if (contactsData) {
+            setContacts(
+              contactsData.map((c) => ({
+                name: c.name,
+                email: c.email,
+                phoneNumber: c.phone_number,
+                relationship: c.relationship,
+              }))
+            );
+          }
+        }
+      } catch (err) {
+        console.error("Error loading user contacts:", err);
+      }
     };
-    getUser();
-  }, []);
+    getUserAndContacts();
+  }, [userId]);
 
   // Sync current location state when SOS mounts/activates
   useEffect(() => {
@@ -148,13 +178,18 @@ const Page = () => {
 
     try {
       const loc = await fetchLocation((address) => {
-        // Use functional update; fall back to loc from closure if prev is null
         setLocation((prev) => ({ ...(prev ?? loc), address }));
       });
       setLocation(loc);
       setIsSending(true);
-      await startSos(loc); // fires immediately, doesn't wait on address
-      setAlertMessage("SOS alert sent to your trusted contacts.");
+      const res = await startSos(loc);
+      if (res && res.success) {
+        setAlertMessage(
+          `SOS Alert Dispatched: Ringing ${res.calls?.triggered || 0} contact phone(s) & emailed ${res.emails?.sent || 0} contact(s) with Google Maps location.`
+        );
+      } else {
+        setAlertMessage("SOS alert activated and notifications sent to your trusted contacts.");
+      }
     } catch (err: unknown) {
       setLocationError(err instanceof Error ? err.message : "Unable to retrieve location.");
     } finally {
@@ -170,128 +205,240 @@ const Page = () => {
     setLocationError("");
   };
 
-  return (
-    <>
-      <main className="w-full h-full p-8 bg-gray-50">
+  const handleDirectCall = (phoneNumber: string) => {
+    if (!phoneNumber) return;
+    window.location.assign(`tel:${phoneNumber}`);
+  };
 
-        {/* SOS Active Banner */}
-        {sosActive && (
-          <div className="w-full mb-6 bg-red-600 text-white rounded-xl px-6 py-4 flex items-center gap-3 shadow-lg animate-pulse">
-            <HiOutlineExclamationCircle className="text-2xl shrink-0" />
+  const googleMapsUrl = location
+    ? `https://www.google.com/maps?q=${location.latitude},${location.longitude}`
+    : null;
+
+  return (
+    <main className="w-full min-h-screen p-4 md:p-8 bg-gray-50">
+      {/* SOS Active Banner */}
+      {sosActive && (
+        <div className="w-full mb-6 bg-red-600 text-white rounded-2xl p-6 shadow-xl animate-pulse">
+          <div className="flex items-center gap-3">
+            <HiOutlineExclamationCircle className="text-3xl shrink-0" />
             <div>
-              <p className="font-bold text-lg">🚨 SOS IS ACTIVE</p>
-              <p className="text-sm text-red-100">
+              <p className="font-extrabold text-xl tracking-wide">🚨 EMERGENCY SOS ACTIVATED</p>
+              <p className="text-sm text-red-100 mt-1">
                 {isSending
-                  ? "Sending alert to your trusted contacts..."
-                  : alertMessage}
+                  ? "Broadcasting emergency phone calls & emails with Google Maps location..."
+                  : alertMessage || "Your registered trusted contacts are being alerted via phone ring and email with your location."}
               </p>
             </div>
           </div>
-        )}
 
-        <section className="w-full h-full border-2 border-gray-300 rounded-lg
-       p-8 bg-white">
-          <h1 className="text-2xl text-black font-semibold">
-            Welcome, {userName || "User"}
-          </h1>
-          <p className="text-gray-500 pt-3">
-            Press the button below to immediately alert your trusted contacts.
-          </p>
-
-          {/* SOS Button */}
-          <div className="w-full mt-8 flex flex-col items-center justify-center py-10 gap-6">
-            <button
-              onClick={handleSosClick}
-              disabled={isFetchingLocation || sosActive}
-              className={`
-              w-50 h-50 rounded-full flex items-center justify-center cursor-pointer
-              transform transition duration-300
-              ${sosActive
-                  ? "bg-red-600 scale-110 shadow-[0_0_40px_10px_rgba(220,38,38,0.6)] animate-pulse"
-                  : "bg-red-600 hover:scale-110 shadow-lg"
-                }
-              disabled:cursor-not-allowed
-            `}
-            >
-              <div className="flex flex-col items-center justify-center gap-2 p-10">
-                <HiOutlineExclamationCircle className="text-white text-3xl" />
-                <span className="text-3xl font-bold text-white">SOS</span>
-                <span className="text-sm text-white">
-                  {isFetchingLocation ? "Locating..." : sosActive ? "Active" : "Tap to Alert"}
+          {sosAlertResult && (
+            <div className="mt-4 pt-4 border-t border-red-500/60 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                <FiPhoneCall className="text-lg" />
+                <span>
+                  <strong>Phone Ring:</strong> {sosAlertResult.calls.triggered} of {sosAlertResult.calls.total} called
                 </span>
               </div>
-            </button>
+              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                <FiMail className="text-lg" />
+                <span>
+                  <strong>Email Alerts:</strong> {sosAlertResult.emails.sent} delivered
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
-            {/* Cancel Button */}
-            {sosActive && (
-              <button
-                onClick={handleCancel}
-                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-900 text-white px-6 py-3 rounded-2xl font-semibold transition duration-200 shadow-md"
-              >
-                <MdCancel className="text-xl" />
-                Cancel SOS Alert
-              </button>
-            )}
-          </div>
+      {/* Main SOS Control Card */}
+      <section className="w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8">
+        <h1 className="text-2xl font-bold text-gray-900">
+          Welcome, {userName || "Guardian User"}
+        </h1>
+        <p className="text-gray-600 mt-1">
+          Tap the emergency button below to instantly trigger automated phone rings and dispatch your Google Maps location to trusted contacts.
+        </p>
 
-          {/* Location Box */}
-          <div
-            className={`w-full border-2 rounded-2xl flex flex-col gap-2 p-6 transition-all duration-300 ${sosActive ? "bg-red-50 border-red-300" : "bg-gray-200 border-gray-300"
-              }`}
+        {/* SOS Button Area */}
+        <div className="w-full mt-6 flex flex-col items-center justify-center py-8 gap-6">
+          <button
+            id="sos-alert-button"
+            onClick={handleSosClick}
+            disabled={isFetchingLocation || sosActive}
+            className={`
+              w-52 h-52 rounded-full flex items-center justify-center cursor-pointer
+              transform transition-all duration-300 select-none
+              ${
+                sosActive
+                  ? "bg-red-600 scale-105 shadow-[0_0_50px_15px_rgba(220,38,38,0.5)] ring-8 ring-red-300"
+                  : "bg-red-600 hover:scale-105 hover:bg-red-700 shadow-xl active:scale-95 ring-4 ring-red-100"
+              }
+              disabled:cursor-not-allowed
+            `}
           >
+            <div className="flex flex-col items-center justify-center gap-2 text-center p-6">
+              <HiOutlineExclamationCircle className="text-white text-4xl" />
+              <span className="text-4xl font-black text-white tracking-wider">SOS</span>
+              <span className="text-xs font-semibold uppercase tracking-widest text-red-100">
+                {isFetchingLocation ? "Getting GPS..." : sosActive ? "Active & Alerting" : "Tap for Emergency"}
+              </span>
+            </div>
+          </button>
+
+          {/* Cancel Button */}
+          {sosActive && (
+            <button
+              onClick={handleCancel}
+              className="flex items-center gap-2 bg-gray-900 hover:bg-black text-white px-8 py-3.5 rounded-full font-bold transition duration-200 shadow-lg cursor-pointer"
+            >
+              <MdCancel className="text-xl text-red-400" />
+              I Am Safe (Cancel SOS)
+            </button>
+          )}
+        </div>
+
+        {/* Location Box */}
+        <div
+          className={`w-full rounded-2xl border p-6 transition-all duration-300 ${
+            sosActive
+              ? "bg-red-50/70 border-red-200 shadow-sm"
+              : "bg-gray-50 border-gray-200"
+          }`}
+        >
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <GrLocation className={`text-xl ${sosActive ? "text-red-500" : "text-gray-500"}`} />
-              <h2 className="font-medium text-black">Current Location</h2>
+              <GrLocation className={`text-2xl ${sosActive ? "text-red-600" : "text-gray-700"}`} />
+              <div>
+                <h2 className="font-bold text-gray-900">Your Current Location</h2>
+                <p className="text-xs text-gray-500">Coordinates shared with contacts during SOS</p>
+              </div>
             </div>
 
-            {locationError && (
-              <p className="text-sm text-red-600 mt-1">{locationError}</p>
-            )}
-
-            {isFetchingLocation && (
-              <p className="text-sm text-gray-500 mt-1">Fetching your location...</p>
-            )}
-
-            {location && !isFetchingLocation && (
-              <div className="mt-1 text-sm text-gray-700 space-y-1">
-                {location.address ? (
-                  <p className="font-medium text-gray-800">{location.address}</p>
-                ) : (
-                  <p className="text-gray-400 italic text-xs animate-pulse">Resolving address...</p>
-                )}
-                <p className="text-gray-500">
-                  Lat: {location.latitude.toFixed(6)}, Lon: {location.longitude.toFixed(6)}
-                </p>
-                <p className="text-gray-400 text-xs">Accuracy: ±{location.accuracy.toFixed(0)}m</p>
-                <a
-                  href={`https://www.google.com/maps?q=${location.latitude},${location.longitude}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block mt-2 text-red-600 underline text-xs"
-                >
-                  View on Google Maps →
-                </a>
-              </div>
-            )}
-
-            {!location && !isFetchingLocation && !locationError && (
-              <p className="text-sm text-gray-400 mt-1">
-                Location will appear here once SOS is activated.
-              </p>
+            {location && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                <FiCheckCircle /> GPS Located
+              </span>
             )}
           </div>
-        </section>
 
-        <section className="w-full h-full border-2 border-gray-300 rounded-xl p-8 bg-white mt-8">
-          <h2 className="text-black font-semibold">Quick Info</h2>
-          <ul className="list-disc list-inside text-gray-600 mt-4">
-            <li>Your location is being tracked when SOS is active</li>
-            <li>Keep your trusted contacts updated with your current information.</li>
-            <li>Regularly review and update your emergency contacts list.</li>
-          </ul>
-        </section>
-      </main>
-    </>
+          {locationError && (
+            <p className="text-sm font-medium text-red-600 mt-3">{locationError}</p>
+          )}
+
+          {isFetchingLocation && (
+            <p className="text-sm text-gray-500 mt-3 animate-pulse">Acquiring high-accuracy GPS coordinates...</p>
+          )}
+
+          {location && !isFetchingLocation && (
+            <div className="mt-4 space-y-2 text-sm text-gray-700 bg-white p-4 rounded-xl border border-gray-200 shadow-xs">
+              <div className="flex items-start gap-2">
+                <FiMapPin className="text-red-600 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-gray-900">
+                    {location.address || "Fetching address..."}
+                  </p>
+                  <p className="text-xs text-gray-500 font-mono mt-0.5">
+                    Lat: {location.latitude.toFixed(6)}, Lon: {location.longitude.toFixed(6)} (±{location.accuracy.toFixed(0)}m accuracy)
+                  </p>
+                </div>
+              </div>
+
+              {googleMapsUrl && (
+                <div className="pt-2">
+                  <a
+                    href={googleMapsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs px-4 py-2 rounded-lg transition shadow-xs"
+                  >
+                    🗺️ Open in Google Maps
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!location && !isFetchingLocation && !locationError && (
+            <p className="text-sm text-gray-500 mt-3">
+              Press the SOS button above to locate you and broadcast your location.
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Trusted Contacts Overview & Direct Ring */}
+      <section className="w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mt-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">Registered Trusted Contacts</h2>
+            <p className="text-sm text-gray-500">
+              These contacts receive the automated phone ring and email with Google Maps location when SOS is triggered.
+            </p>
+          </div>
+          <span className="text-xs font-bold px-3 py-1 bg-red-100 text-red-700 rounded-full">
+            {contacts.length} Contact{contacts.length === 1 ? "" : "s"}
+          </span>
+        </div>
+
+        {contacts.length === 0 ? (
+          <div className="mt-4 p-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
+            <p className="text-gray-600 font-medium">No trusted contacts registered yet.</p>
+            <a
+              href="/contacts"
+              className="inline-block mt-2 text-sm font-semibold text-red-600 hover:underline"
+            >
+              + Add Trusted Contacts Now →
+            </a>
+          </div>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {contacts.map((contact, index) => (
+              <div
+                key={index}
+                className="flex items-center justify-between p-4 rounded-xl border border-gray-200 bg-gray-50 hover:bg-red-50/40 transition"
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-gray-900">{contact.name}</p>
+                    {contact.relationship && (
+                      <span className="text-xs bg-gray-200 text-gray-700 font-medium px-2 py-0.5 rounded-full">
+                        {contact.relationship}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1 flex items-center gap-1.5">
+                    <FiPhoneCall className="text-gray-400" /> {contact.phoneNumber || "No phone"}
+                  </p>
+                  <p className="text-xs text-gray-600 flex items-center gap-1.5 mt-0.5">
+                    <FiMail className="text-gray-400" /> {contact.email || "No email"}
+                  </p>
+                </div>
+
+                {contact.phoneNumber && (
+                  <button
+                    onClick={() => handleDirectCall(contact.phoneNumber)}
+                    title={`Ring ${contact.name}`}
+                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-xs cursor-pointer shrink-0"
+                  >
+                    <FiPhoneCall /> Ring Now
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Quick Info */}
+      <section className="w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mt-6">
+        <h3 className="font-bold text-gray-900">How SafeAlert Guardian Protects You</h3>
+        <ul className="list-disc list-inside text-sm text-gray-600 space-y-1.5 mt-3">
+          <li><strong>Instant Phone Ring:</strong> When SOS is pressed, your contact’s phone receives an automated phone call alerting them of the emergency.</li>
+          <li><strong>Email with Google Maps:</strong> An emergency email is delivered to their inbox with your address, coordinates, and an interactive link to open your live location on Google Maps.</li>
+          <li><strong>Continuous Safety Tracking:</strong> High-precision location updates are safely transmitted while SOS is active.</li>
+        </ul>
+      </section>
+    </main>
   );
 };
 
