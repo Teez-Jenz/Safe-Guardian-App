@@ -7,6 +7,7 @@ import { MdCancel } from "react-icons/md";
 import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle } from "react-icons/fi";
 import { useSafety } from "./context/SafetyContext";
 import { supabase } from "@/lib/supabase";
+import EnableNotifications from "./components/EnableNotifications";
 
 interface Location {
   latitude: number;
@@ -249,6 +250,9 @@ const Page = () => {
           )}
         </div>
       )}
+
+      {/* Push Notifications Opt-In Banner */}
+      <EnableNotifications userId={userId} className="mb-6" />
 
       {/* Main SOS Control Card */}
       <section className="w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8">

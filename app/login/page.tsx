@@ -13,6 +13,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { LuShield } from "react-icons/lu";
 import { CiPhone } from "react-icons/ci";
+import { AiOutlineEye, AiOutlineEyeInvisible } from "react-icons/ai";
 
 type UserRecord = {
   id: string | number;
@@ -27,6 +28,7 @@ const LoginPage = () => {
   const [pinDigits, setPinDigits] = useState<string[]>(
     Array(PIN_LENGTH).fill(""),
   );
+  const [showPin, setShowPin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const pinInputRefs = useRef<Array<HTMLInputElement | null>>([]);
@@ -193,19 +195,36 @@ const LoginPage = () => {
             </div>
 
             <div className="mb-6">
-              <label
-                htmlFor="pin"
-                className="block text-sm font-semibold text-gray-700 mb-3"
-              >
-                Enter your 4-digit PIN
-              </label>
+              <div className="flex items-center justify-between mb-3">
+                <label
+                  htmlFor="pin-0"
+                  className="block text-sm font-semibold text-gray-700"
+                >
+                  Enter your 4-digit PIN
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowPin((prev) => !prev)}
+                  className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 focus:outline-none cursor-pointer"
+                >
+                  {showPin ? (
+                    <>
+                      <AiOutlineEyeInvisible size={16} /> Hide
+                    </>
+                  ) : (
+                    <>
+                      <AiOutlineEye size={16} /> Show
+                    </>
+                  )}
+                </button>
+              </div>
 
               <div className="flex gap-3">
                 {Array.from({ length: PIN_LENGTH }).map((_, index) => (
                   <input
                     key={`pin-${index}`}
                     id={`pin-${index}`}
-                    type="text"
+                    type={showPin ? "text" : "password"}
                     inputMode="numeric"
                     maxLength={1}
                     value={pinDigits[index]}
@@ -243,7 +262,7 @@ const LoginPage = () => {
                 href="/signin"
                 className="font-medium text-red-600 underline"
               >
-                Sign In
+                Sign Up
               </Link>
             </p>
           </form>

@@ -1,32 +1,50 @@
 "use client";
 
-import { getMessaging, getToken, isSupported } from "firebase/messaging";
+import {
+  getMessaging,
+  getToken,
+  isSupported,
+  onMessage,
+  MessagePayload,
+} from "firebase/messaging";
 import { firebaseApp } from "./firebase";
 
-export async function requestNotificationPermission() {
+export async function requestNotificationPermission(): Promise<string | null> {
   try {
-    // Check whether this browser supports Firebase Cloud Messaging
-    const supported = await isSupported();
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      console.log("This browser does not support desktop notifications.");
+      return null;
+    }
 
+    const supported = await isSupported();
     if (!supported) {
       console.log("Firebase Cloud Messaging is not supported in this browser.");
       return null;
     }
 
-    // Ask the user for notification permission
     const permission = await Notification.requestPermission();
-
     if (permission !== "granted") {
       console.log("Notification permission was not granted.");
       return null;
     }
 
-    // Get Firebase Messaging instance
-    const messaging = getMessaging(firebaseApp);
+    // Ensure the service worker is properly registered
+    let registration: ServiceWorkerRegistration | undefined;
+    if ("serviceWorker" in navigator) {
+      try {
+        registration = await navigator.serviceWorker.register(
+          "/firebase-messaging-sw.js"
+        );
+        await navigator.serviceWorker.ready;
+      } catch (swErr) {
+        console.warn("Service worker registration error:", swErr);
+      }
+    }
 
-    // Get the browser's FCM registration token
+    const messaging = getMessaging(firebaseApp);
     const token = await getToken(messaging, {
       vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
+      serviceWorkerRegistration: registration,
     });
 
     if (!token) {
@@ -35,10 +53,20 @@ export async function requestNotificationPermission() {
     }
 
     console.log("FCM registration token:", token);
-
     return token;
   } catch (error) {
     console.error("Error setting up Firebase notifications:", error);
     return null;
+  }
+}
+
+export function onForegroundMessage(callback: (payload: MessagePayload) => void) {
+  if (typeof window === "undefined") return () => {};
+  try {
+    const messaging = getMessaging(firebaseApp);
+    return onMessage(messaging, callback);
+  } catch (err) {
+    console.warn("Could not listen for foreground messages:", err);
+    return () => {};
   }
 }

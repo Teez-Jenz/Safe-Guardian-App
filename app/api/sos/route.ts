@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { Resend } from "resend";
+import { sendBrevoEmail } from "@/lib/brevo";
 import twilio from "twilio";
-
-const resendApiKey = process.env.RESEND_API_KEY;
-const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
 const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
 const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
@@ -19,7 +16,7 @@ const twilioClient =
 function formatToE164(phone: string, defaultCountryCode = "+234"): string {
   if (!phone) return "";
   const trimmed = phone.trim();
-  let digitsAndPlus = trimmed.replace(/[^\d+]/g, "");
+  const digitsAndPlus = trimmed.replace(/[^\d+]/g, "");
 
   if (digitsAndPlus.startsWith("+")) {
     return digitsAndPlus;
@@ -88,31 +85,23 @@ export async function POST(req: NextRequest) {
 
     const googleMapsLink = `https://www.google.com/maps?q=${lat},${lon}`;
     const googleDirectionsLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
-    const fromEmail =
-      process.env.RESEND_FROM_EMAIL || "SafeAlert Guardian <onboarding@resend.dev>";
     const alertTime = new Date().toLocaleString("en-US", {
       dateStyle: "full",
       timeStyle: "medium",
     });
 
-    // 3. Send Email Alerts via Resend
+    // 3. Send Email Alerts via Brevo
     const emailPromises = contacts
       .filter((contact) => contact.email && contact.email.trim().length > 0)
       .map(async (contact) => {
-        if (!resend) {
-          console.warn("Resend is not configured (missing RESEND_API_KEY).");
-          return { contact: contact.name, email: contact.email, status: "skipped_no_api_key" };
-        }
-
         const relationshipLabel = contact.relationship
           ? `their ${contact.relationship}`
           : "someone they trust";
 
-        return resend.emails.send({
-          from: fromEmail,
-          to: contact.email.trim(),
+        const emailResult = await sendBrevoEmail({
+          to: [{ email: contact.email.trim(), name: contact.name }],
           subject: `🚨 EMERGENCY SOS ALERT: ${senderName} needs immediate assistance!`,
-          html: `
+          htmlContent: `
           <!DOCTYPE html>
           <html lang="en">
             <head>
@@ -231,6 +220,18 @@ export async function POST(req: NextRequest) {
           </html>
           `,
         });
+
+        if (!emailResult.success) {
+          console.error(`Brevo Email Error for ${contact.name} (${contact.email}):`, emailResult.error);
+          throw new Error(emailResult.error || "Failed to send email via Brevo");
+        }
+
+        return {
+          contact: contact.name,
+          email: contact.email,
+          status: "sent",
+          messageId: emailResult.messageId,
+        };
       });
 
     // 4. Trigger Phone Calls (Ringing Phone Number) and SMS via Twilio
