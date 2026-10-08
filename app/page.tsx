@@ -233,19 +233,33 @@ const Page = () => {
           </div>
 
           {sosAlertResult && (
-            <div className="mt-4 pt-4 border-t border-red-500/60 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
-                <FiPhoneCall className="text-lg" />
-                <span>
-                  <strong>Phone Ring:</strong> {sosAlertResult.calls.triggered} of {sosAlertResult.calls.total} called
-                </span>
+            <div className="mt-4 pt-4 border-t border-red-500/60 space-y-2 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                  <FiPhoneCall className="text-lg" />
+                  <span>
+                    <strong>Phone Ring:</strong> {sosAlertResult.calls.triggered} of {sosAlertResult.calls.total} called
+                  </span>
+                </div>
+                <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                  <FiMail className="text-lg" />
+                  <span>
+                    <strong>Email Alerts:</strong> {sosAlertResult.emails.sent} delivered
+                    {sosAlertResult.emails.failed > 0 && (
+                      <span className="text-xs text-red-200 ml-1 font-semibold">
+                        ({sosAlertResult.emails.failed} failed)
+                      </span>
+                    )}
+                  </span>
+                </div>
               </div>
-              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
-                <FiMail className="text-lg" />
-                <span>
-                  <strong>Email Alerts:</strong> {sosAlertResult.emails.sent} delivered
-                </span>
-              </div>
+
+              {sosAlertResult.emailError && (
+                <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
+                  <span className="font-bold shrink-0">⚠️ Brevo Notice:</span>
+                  <span>{sosAlertResult.emailError}</span>
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -313,6 +313,10 @@ export async function POST(req: NextRequest) {
 
     const emailsSent = emailResults.filter((r) => r.status === "fulfilled").length;
     const emailsFailed = emailResults.filter((r) => r.status === "rejected").length;
+    const firstEmailError = emailResults.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+    const emailErrorMessage = firstEmailError
+      ? firstEmailError.reason?.message || String(firstEmailError.reason)
+      : undefined;
 
     const callsTriggered = callResults.filter(
       (r) => r.status === "fulfilled" && !(r.value as { error?: string }).error,
@@ -332,6 +336,7 @@ export async function POST(req: NextRequest) {
         sent: emailsSent,
         failed: emailsFailed,
       },
+      emailError: emailErrorMessage,
       calls: {
         triggered: callsTriggered,
         total: contacts.filter((c) => c.phone_number).length,

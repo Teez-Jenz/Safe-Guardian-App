@@ -24,6 +24,7 @@ export interface SosAlertResult {
     googleMapsLink: string;
   };
   error?: string;
+  emailError?: string;
 }
 
 interface SafetyContextType {
