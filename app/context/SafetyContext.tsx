@@ -293,7 +293,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         address: finalAddress || "",
       });
 
-      // 2. Call local SOS API to notify trusted contacts via Resend and Twilio
+      // 2. Call local SOS API to notify trusted contacts via Brevo email and Africa's Talking Voice
       const sosRes = await fetch("/api/sos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

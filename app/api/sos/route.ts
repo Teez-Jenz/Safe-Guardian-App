@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { sendBrevoEmail } from "@/lib/brevo";
-import twilio from "twilio";
+import { initiateVoiceCall } from "@/lib/africastalking";
 
-const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
-const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
-const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
-
-const twilioClient =
-  twilioAccountSid && twilioAuthToken
-    ? twilio(twilioAccountSid, twilioAuthToken)
-    : null;
+// In-memory de-duplication cache: tracks the timestamp of the last SOS request per user
+const recentSosRequests = new Map<string, number>();
+const SOS_COOLDOWN_MS = 10_000; // 10-second cooldown per user
 
 // Helper to normalize phone numbers to E.164 standard (e.g., 08089663211 -> +2348089663211)
 function formatToE164(phone: string, defaultCountryCode = "+234"): string {
@@ -43,6 +38,31 @@ export async function POST(req: NextRequest) {
         { error: "Missing userId or location" },
         { status: 400 },
       );
+    }
+
+    // Rate Limiting / De-duplication check
+    const now = Date.now();
+    const lastRequestTime = recentSosRequests.get(userId);
+    if (lastRequestTime && now - lastRequestTime < SOS_COOLDOWN_MS) {
+      const remainingSeconds = Math.ceil((SOS_COOLDOWN_MS - (now - lastRequestTime)) / 1000);
+      return NextResponse.json(
+        {
+          error: `SOS was triggered very recently. Please wait ${remainingSeconds} second(s) before requesting again.`,
+          rateLimited: true,
+        },
+        { status: 429 },
+      );
+    }
+    recentSosRequests.set(userId, now);
+
+    // Prune stale cache entries if map grows
+    if (recentSosRequests.size > 500) {
+      const cutoff = now - 10 * 60 * 1000;
+      for (const [key, timestamp] of recentSosRequests.entries()) {
+        if (timestamp < cutoff) {
+          recentSosRequests.delete(key);
+        }
+      }
     }
 
     const lat = Number(location.latitude);
@@ -234,75 +254,55 @@ export async function POST(req: NextRequest) {
         };
       });
 
-    // 4. Trigger Phone Calls (Ringing Phone Number) and SMS via Twilio
+    // 4. Trigger Outbound Voice Calls via Africa's Talking REST API
+    const atUsername = process.env.AT_USERNAME;
+    const atApiKey = process.env.AT_API_KEY;
+    const atVoiceNumber = process.env.AT_VOICE_NUMBER;
+    const isAtVoiceConfigured = Boolean(atUsername && atApiKey && atVoiceNumber);
+
+    if (!isAtVoiceConfigured) {
+      console.warn(
+        "Africa's Talking Voice is not fully configured (missing AT_USERNAME, AT_API_KEY, or AT_VOICE_NUMBER).",
+      );
+    }
+
     const callPromises = contacts
       .filter((contact) => contact.phone_number && contact.phone_number.trim().length > 0)
       .map(async (contact) => {
-        if (!twilioClient || !twilioPhoneNumber) {
-          console.warn(
-            "Twilio Voice is not fully configured (missing TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, or TWILIO_PHONE_NUMBER).",
-          );
+        const formattedTo = formatToE164(contact.phone_number);
+
+        if (!isAtVoiceConfigured) {
           return {
             contact: contact.name,
-            phone: contact.phone_number,
-            status: "skipped_no_twilio_config",
+            phone: formattedTo,
+            status: "skipped_no_at_config",
+            error: "Africa's Talking Voice credentials not configured in .env.local",
           };
         }
 
-        const formattedTo = formatToE164(contact.phone_number);
-        const formattedFrom = formatToE164(twilioPhoneNumber);
+        const clientRequestId = `sos-${userId}-${contact.phone_number.replace(/\D/g, "")}`;
+        const callResult = await initiateVoiceCall({
+          to: formattedTo,
+          clientRequestId,
+        });
 
-        const twimlMessage = `
-          <Response>
-            <Pause length="1"/>
-            <Say voice="alice" language="en-US">
-              Emergency SOS Alert! Emergency SOS Alert!
-              Your contact, ${senderName}, has triggered an emergency alert on SafeAlert Guardian and may need immediate help.
-              We have dispatched their exact location details and a Google Maps link to your registered email address.
-              Please check your email immediately, or reach out to ${senderName} right away.
-            </Say>
-            <Pause length="2"/>
-            <Say voice="alice" language="en-US">
-              Repeating: Emergency SOS Alert from ${senderName}. Please check your email for their live Google Maps location.
-            </Say>
-          </Response>
-        `.trim();
-
-        const results: {
-          callResult?: unknown;
-          smsResult?: unknown;
-          error?: string;
-        } = {};
-
-        // 4a. Make Phone Call (Rings the contact's phone)
-        try {
-          const call = await twilioClient.calls.create({
-            twiml: twimlMessage,
-            to: formattedTo,
-            from: formattedFrom,
-          });
-          results.callResult = { sid: call.sid, status: call.status };
-        } catch (callErr: unknown) {
-          console.error(`Twilio Call Error for ${contact.name} (${formattedTo}):`, callErr);
-          results.error = callErr instanceof Error ? callErr.message : "Twilio call failed";
-        }
-
-        // 4b. Send SMS with direct Google Maps link
-        try {
-          const sms = await twilioClient.messages.create({
-            body: `🚨 SafeAlert SOS: ${senderName} triggered an emergency alert! Location: ${address}. View on Google Maps: ${googleMapsLink}`,
-            to: formattedTo,
-            from: formattedFrom,
-          });
-          results.smsResult = { sid: sms.sid, status: sms.status };
-        } catch (smsErr: unknown) {
-          console.error(`Twilio SMS Error for ${contact.name} (${formattedTo}):`, smsErr);
-        }
+        const entry = callResult.entries?.[0];
+        const isQueued =
+          callResult.success &&
+          (entry
+            ? entry.status === "Queued" ||
+              entry.status === "Success" ||
+              entry.status === "InProgress"
+            : true);
 
         return {
           contact: contact.name,
           phone: formattedTo,
-          ...results,
+          status: isQueued ? "queued" : "failed",
+          sessionId: entry?.sessionId,
+          entryStatus: entry?.status,
+          error: !isQueued ? (callResult.error || entry?.status || "Call failed") : undefined,
+          raw: callResult.raw,
         };
       });
 

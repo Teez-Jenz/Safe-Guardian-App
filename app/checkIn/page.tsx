@@ -15,6 +15,9 @@ const ACTIVITIES = [
 ];
 
 const DURATIONS = [
+  {label: "1 minutes", minutes: 1},
+  {label: "2 minutes", minutes: 2},
+  {label: "3 minutes", minutes: 3},
   { label: "5 minutes", minutes: 5 },
   { label: "10 minutes", minutes: 10 },
   { label: "15 minutes", minutes: 15 },
