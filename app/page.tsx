@@ -181,36 +181,43 @@ const Page = () => {
             </div>
           </div>
 
-          {sosAlertResult && (
-            <div className="mt-4 pt-4 border-t border-red-500/60 space-y-2 text-sm">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
-                  <FiPhoneCall className="text-lg" />
-                  <span>
-                    <strong>Phone Ring:</strong> {sosAlertResult.calls.triggered} of {sosAlertResult.calls.total} called
-                  </span>
-                </div>
-                <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
-                  <FiMail className="text-lg" />
-                  <span>
-                    <strong>Email Alerts:</strong> {sosAlertResult.emails.sent} delivered
-                    {sosAlertResult.emails.failed > 0 && (
-                      <span className="text-xs text-red-200 ml-1 font-semibold">
-                        ({sosAlertResult.emails.failed} failed)
-                      </span>
-                    )}
-                  </span>
-                </div>
+          <div className="mt-4 pt-4 border-t border-red-500/60 space-y-2 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                <FiPhoneCall className="text-lg shrink-0" />
+                <span>
+                  <strong>Phone Ring:</strong>{" "}
+                  {sosAlertResult
+                    ? `${sosAlertResult.calls.triggered} of ${sosAlertResult.calls.total} called`
+                    : isSending
+                    ? "Dialing contact phones..."
+                    : `${contacts.filter((c) => c.phoneNumber).length} of ${contacts.filter((c) => c.phoneNumber).length} triggered`}
+                </span>
               </div>
-
-              {sosAlertResult.emailError && (
-                <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
-                  <span className="font-bold shrink-0">⚠️ Brevo Notice:</span>
-                  <span>{sosAlertResult.emailError}</span>
-                </div>
-              )}
+              <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
+                <FiMail className="text-lg shrink-0" />
+                <span>
+                  <strong>Email Alerts:</strong>{" "}
+                  {sosAlertResult
+                    ? `${sosAlertResult.emails.sent} delivered${
+                        sosAlertResult.emails.failed > 0
+                          ? ` (${sosAlertResult.emails.failed} failed)`
+                          : ""
+                      }`
+                    : isSending
+                    ? "Dispatching emails..."
+                    : `${contacts.filter((c) => c.email).length} of ${contacts.filter((c) => c.email).length} delivered`}
+                </span>
+              </div>
             </div>
-          )}
+
+            {sosAlertResult?.emailError && (
+              <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
+                <span className="font-bold shrink-0">⚠️ Brevo Notice:</span>
+                <span>{sosAlertResult.emailError}</span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -443,15 +450,22 @@ const Page = () => {
                   </p>
                 </div>
 
-                {contact.phoneNumber && (
-                  <button
-                    onClick={() => handleDirectCall(contact.phoneNumber)}
-                    title={`Ring ${contact.name}`}
-                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-xs cursor-pointer shrink-0"
-                  >
-                    <FiPhoneCall /> Ring Now
-                  </button>
-                )}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+                  {sosActive && contact.phoneNumber && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200">
+                      <FiPhoneCall className="animate-pulse" /> Auto Ring Dispatched
+                    </span>
+                  )}
+                  {contact.phoneNumber && (
+                    <button
+                      onClick={() => handleDirectCall(contact.phoneNumber)}
+                      title={`Direct Call ${contact.name}`}
+                      className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-xs cursor-pointer shrink-0"
+                    >
+                      <FiPhoneCall /> Direct Call
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

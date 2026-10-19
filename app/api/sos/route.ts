@@ -5,7 +5,8 @@ import { initiateVoiceCall } from "@/lib/africastalking";
 
 // In-memory de-duplication cache: tracks the timestamp of the last SOS request per user
 const recentSosRequests = new Map<string, number>();
-const SOS_COOLDOWN_MS = 10_000; // 10-second cooldown per user
+const lastSosResponses = new Map<string, unknown>();
+const SOS_COOLDOWN_MS = 6_000; // 6-second cooldown per user
 
 // Helper to normalize phone numbers to E.164 standard (e.g., 08089663211 -> +2348089663211)
 function formatToE164(phone: string, defaultCountryCode = "+234"): string {
@@ -40,18 +41,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Rate Limiting / De-duplication check
+    // Rate Limiting / De-duplication check: if triggered recently, return cached response so dashboard numbers persist
     const now = Date.now();
     const lastRequestTime = recentSosRequests.get(userId);
     if (lastRequestTime && now - lastRequestTime < SOS_COOLDOWN_MS) {
-      const remainingSeconds = Math.ceil((SOS_COOLDOWN_MS - (now - lastRequestTime)) / 1000);
-      return NextResponse.json(
-        {
-          error: `SOS was triggered very recently. Please wait ${remainingSeconds} second(s) before requesting again.`,
-          rateLimited: true,
-        },
-        { status: 429 },
-      );
+      const prev = lastSosResponses.get(userId);
+      if (prev) {
+        return NextResponse.json(
+          { ...(prev as object), rateLimited: true },
+          { status: 200 }
+        );
+      }
     }
     recentSosRequests.set(userId, now);
 
@@ -287,12 +287,13 @@ export async function POST(req: NextRequest) {
         });
 
         const entry = callResult.entries?.[0];
+        const statusStr = (entry?.status || "").toLowerCase();
         const isQueued =
           callResult.success &&
           (entry
-            ? entry.status === "Queued" ||
-              entry.status === "Success" ||
-              entry.status === "InProgress"
+            ? statusStr === "queued" ||
+              statusStr === "success" ||
+              statusStr === "inprogress"
             : true);
 
         return {
@@ -322,7 +323,7 @@ export async function POST(req: NextRequest) {
       (r) => r.status === "fulfilled" && !(r.value as { error?: string }).error,
     ).length;
 
-    return NextResponse.json({
+    const responsePayload = {
       success: true,
       senderName,
       location: {
@@ -345,7 +346,10 @@ export async function POST(req: NextRequest) {
         emails: emailResults,
         calls: callResults,
       },
-    });
+    };
+
+    lastSosResponses.set(userId, responsePayload);
+    return NextResponse.json(responsePayload);
   } catch (err) {
     console.error("SOS route error:", err);
     return NextResponse.json(

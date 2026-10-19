@@ -144,13 +144,19 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           .eq("user_id", curUserId)
           .single();
 
-        if (statusData?.status === "danger") {
+        const isDanger =
+          statusData?.status === "danger" ||
+          localStorage.getItem("sos_active") === "true";
+
+        if (isDanger) {
           setSosActive(true);
-        } else {
-          // Check LocalStorage as fallback
-          const localSos = localStorage.getItem("sos_active");
-          if (localSos === "true") {
-            setSosActive(true);
+          const cachedResult = localStorage.getItem("sos_alert_result");
+          if (cachedResult) {
+            try {
+              setSosAlertResult(JSON.parse(cachedResult));
+            } catch (e) {
+              console.warn("Failed to parse cached sos_alert_result:", e);
+            }
           }
         }
 
@@ -298,6 +304,17 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (sosRes.ok) {
         alertData = await sosRes.json();
         setSosAlertResult(alertData);
+        try {
+          localStorage.setItem("sos_alert_result", JSON.stringify(alertData));
+        } catch {}
+      } else {
+        const stored = localStorage.getItem("sos_alert_result");
+        if (stored) {
+          try {
+            alertData = JSON.parse(stored);
+            setSosAlertResult(alertData);
+          } catch {}
+        }
       }
 
       // 3. Set safety status to danger
@@ -331,6 +348,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setSosActive(false);
     setSosAlertResult(null);
     localStorage.removeItem("sos_active");
+    localStorage.removeItem("sos_alert_result");
 
     try {
       // Reset safety status to safe
