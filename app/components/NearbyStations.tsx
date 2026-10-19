@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TbNavigation } from "react-icons/tb";
 import { MdLocalPhone } from "react-icons/md";
 import { GrLocation } from "react-icons/gr";
+import { getBestLocation } from "@/lib/geolocation";
 
 interface Station {
   name: string;
@@ -122,58 +123,53 @@ const NearbyStations = () => {
       .slice(0, 5);
   }, []);
 
-  const fetchNearbyStations = useCallback(() => {
-    if (!navigator.geolocation) {
-      setError("Geolocation is not supported by your browser.");
-      return;
-    }
-
+  const fetchNearbyStations = useCallback(async () => {
     setLoading(true);
     setError("");
     setStations([]);
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        setLocationEnabled(true);
+    try {
+      const loc = await getBestLocation();
+      if (!loc.latitude && !loc.longitude) {
+        setError("Unable to determine your location. Please check your network connection.");
+        setLoading(false);
+        return;
+      }
 
-        let success = false;
+      const { latitude, longitude } = loc;
+      setLocationEnabled(true);
 
-        for (const endpoint of OVERPASS_ENDPOINTS) {
-          try {
-            console.log("Trying endpoint:", endpoint);
-            const results = await queryOverpass(latitude, longitude, endpoint);
-            setStations(results);
-            success = true;
+      let success = false;
 
-            if (results.length === 0) {
-              setError(
-                "No police stations found within 5km of your location."
-              );
-            }
+      for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+          const results = await queryOverpass(latitude, longitude, endpoint);
+          setStations(results);
+          success = true;
 
-            break; // Stop trying endpoints once one works
-          } catch (err: unknown) {
-            console.warn(`Endpoint failed (${endpoint}):`, err instanceof Error ? err.message : String(err));
+          if (results.length === 0) {
+            setError(
+              "No police stations found within 5km of your location."
+            );
           }
-        }
 
-        if (!success) {
-          setError(
-            "Unable to reach map services. Please check your internet connection."
-          );
+          break; // Stop trying endpoints once one works
+        } catch (err: unknown) {
+          console.warn(`Endpoint failed (${endpoint}):`, err instanceof Error ? err.message : String(err));
         }
+      }
 
-        setLoading(false);
-      },
-      () => {
-        setLoading(false);
+      if (!success) {
         setError(
-          "Location access denied. Enable location for accurate results."
+          "Unable to reach map services. Please check your internet connection."
         );
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+      }
+    } catch (err: unknown) {
+      console.error("Nearby stations location error:", err);
+      setError("Unable to retrieve location coordinates.");
+    } finally {
+      setLoading(false);
+    }
   }, [queryOverpass]);
 
   useEffect(() => {

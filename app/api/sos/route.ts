@@ -65,9 +65,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const lat = Number(location.latitude);
-    const lon = Number(location.longitude);
-    const address = location.address || `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    const lat = typeof location.latitude === "number" ? location.latitude : Number(location.latitude) || 0;
+    const lon = typeof location.longitude === "number" ? location.longitude : Number(location.longitude) || 0;
+    const address = location.address || (lat !== 0 || lon !== 0 ? `${lat.toFixed(5)}, ${lon.toFixed(5)}` : "Approximate location unavailable");
 
     // 1. Fetch the SOS sender's info
     const { data: user, error: userError } = await supabase

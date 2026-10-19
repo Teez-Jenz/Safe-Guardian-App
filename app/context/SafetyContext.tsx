@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { getBestLocation } from "@/lib/geolocation";
 
 interface ActiveCheckIn {
   id: string;
@@ -184,51 +185,37 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const trackLocation = useCallback(async () => {
     if (!userId || (!sosActive && !activeCheckIn)) return;
 
-    if (!navigator.geolocation) {
-      console.warn("Geolocation is not supported by your browser.");
-      return;
-    }
+    try {
+      const loc = await getBestLocation();
+      const latitude = loc.latitude;
+      const longitude = loc.longitude;
+      const address = loc.address || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
+      const statusVal = sosActive ? "danger" : activeCheckIn ? "warning" : "safe";
 
-        // Reverse-geocode coordinates using Overpass API
-        let address = "";
-        try {
-          address = await getAddressFromOverpass(latitude, longitude);
-        } catch {
-          address = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-        }
-
-        const statusVal = sosActive ? "danger" : activeCheckIn ? "warning" : "safe";
-
-        // Update public.safety_status
-        await supabase.from("safety_status").upsert(
-          {
-            user_id: userId,
-            status: statusVal,
-            last_seen: new Date().toISOString(),
-          },
-          { onConflict: "user_id" }
-        );
-
-        // Log to public.route_history
-        const label = sosActive
-          ? `🚨 SOS Active - near ${address}`
-          : `⏱️ Check-in active (${activeCheckIn?.activity}) - near ${address}`;
-
-        await supabase.from("route_history").insert({
+      // Update public.safety_status
+      await supabase.from("safety_status").upsert(
+        {
           user_id: userId,
-          label: label,
-          recorded_at: new Date().toISOString(),
-        });
-      },
-      (error) => {
-        console.error("Failed to fetch geolocation in background:", error);
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
+          status: statusVal,
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+
+      // Log to public.route_history
+      const label = sosActive
+        ? `🚨 SOS Active - near ${address}`
+        : `⏱️ Check-in active (${activeCheckIn?.activity}) - near ${address}`;
+
+      await supabase.from("route_history").insert({
+        user_id: userId,
+        label: label,
+        recorded_at: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.warn("Background location tracking notice:", error);
+    }
   }, [userId, sosActive, activeCheckIn]);
 
   // 3. Set up the background tracking loop (every 30 seconds)

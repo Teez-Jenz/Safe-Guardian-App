@@ -1,20 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { GrLocation } from "react-icons/gr";
-import { MdCancel } from "react-icons/md";
-import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle } from "react-icons/fi";
+import { MdCancel, MdSensors } from "react-icons/md";
+import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle, FiRefreshCw } from "react-icons/fi";
 import { useSafety } from "./context/SafetyContext";
+import { useShake } from "./context/ShakeContext";
 import { supabase } from "@/lib/supabase";
+import { getBestLocation, LocationResult } from "@/lib/geolocation";
 import EnableNotifications from "./components/EnableNotifications";
-
-interface Location {
-  latitude: number;
-  longitude: number;
-  accuracy: number;
-  address?: string;
-}
+import ShakeSettingsCard from "./components/ShakeSettingsCard";
 
 interface Contact {
   name: string;
@@ -23,100 +19,38 @@ interface Contact {
   relationship: string;
 }
 
-type AddressCallback = (address: string) => void;
-
-interface NominatimAddress {
-  house_number?: string;
-  road?: string;
-  pedestrian?: string;
-  footway?: string;
-  suburb?: string;
-  neighbourhood?: string;
-  quarter?: string;
-  city?: string;
-  town?: string;
-  village?: string;
-  county?: string;
-}
-
-interface NominatimResponse {
-  address?: NominatimAddress;
-  display_name?: string;
-}
-
-// Reverse geocode using Nominatim (OSM's dedicated reverse geocoding API)
-const getAddress = async (lat: number, lon: number): Promise<string> => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`,
-      {
-        headers: {
-          "Accept-Language": "en",
-          "User-Agent": "SafeGuardianApp/1.0",
-        },
-        signal: controller.signal,
-      }
-    );
-    clearTimeout(timeoutId);
-
-    if (!response.ok) throw new Error("Nominatim request failed");
-
-    const data = (await response.json()) as NominatimResponse;
-    const addr = data.address;
-
-    if (addr) {
-      const parts = [
-        addr.house_number,
-        addr.road || addr.pedestrian || addr.footway,
-        addr.suburb || addr.neighbourhood || addr.quarter,
-        addr.city || addr.town || addr.village || addr.county,
-      ].filter(Boolean);
-
-      if (parts.length > 0) return parts.join(", ");
-    }
-
-    if (data.display_name) return data.display_name;
-  } catch (err) {
-    clearTimeout(timeoutId);
-    console.warn("Nominatim reverse geocoding failed:", err);
-  }
-
-  return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-};
-
-const fetchLocation = (onAddress?: AddressCallback): Promise<Location> => {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Geolocation is not supported by your browser."));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position: GeolocationPosition) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        resolve({ latitude, longitude, accuracy });
-
-        getAddress(latitude, longitude).then((address: string) => {
-          onAddress?.(address);
-        });
-      },
-      (error: GeolocationPositionError) => reject(new Error(error.message)),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
-    );
-  });
-};
-
 const Page = () => {
   const [userName, setUserName] = useState("");
   const [contacts, setContacts] = useState<Contact[]>([]);
   const { sosActive, sosAlertResult, startSos, stopSos, userId } = useSafety();
-  const [location, setLocation] = useState<Location | null>(null);
+  const { shakeCount, registerOnTrigger } = useShake();
+  const [location, setLocation] = useState<LocationResult | null>(null);
   const [locationError, setLocationError] = useState("");
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
+
+  const fetchCurrentLocation = useCallback(async () => {
+    setIsFetchingLocation(true);
+    setLocationError("");
+    try {
+      const loc = await getBestLocation((address) => {
+        setLocation((prev) => (prev ? { ...prev, address } : null));
+      });
+      setLocation(loc);
+      return loc;
+    } catch (err: unknown) {
+      console.warn("Location probe warning:", err);
+      return null;
+    } finally {
+      setIsFetchingLocation(false);
+    }
+  }, []);
+
+  // Warm-up location proactively on page mount
+  useEffect(() => {
+    fetchCurrentLocation();
+  }, [fetchCurrentLocation]);
 
   useEffect(() => {
     const getUserAndContacts = async () => {
@@ -154,36 +88,35 @@ const Page = () => {
   // Sync current location state when SOS mounts/activates
   useEffect(() => {
     if (sosActive && !location) {
-      const timer = setTimeout(() => {
-        setIsFetchingLocation(true);
-        fetchLocation()
-          .then((loc) => {
-            setLocation(loc);
-          })
-          .catch((err: unknown) => {
-            setLocationError(err instanceof Error ? err.message : "Unable to retrieve location.");
-          })
-          .finally(() => {
-            setIsFetchingLocation(false);
-          });
-      }, 0);
-      return () => clearTimeout(timer);
+      fetchCurrentLocation();
     }
-  }, [sosActive, location]);
+  }, [sosActive, location, fetchCurrentLocation]);
 
   const handleSosClick = async () => {
     if (sosActive) return;
 
-    setIsFetchingLocation(true);
     setLocationError("");
+    setIsSending(true);
 
     try {
-      const loc = await fetchLocation((address) => {
-        setLocation((prev) => ({ ...(prev ?? loc), address }));
+      // 1. Resolve location without hanging or crashing on timeout
+      let loc = location;
+      if (!loc || (!loc.latitude && !loc.longitude)) {
+        setIsFetchingLocation(true);
+        loc = await getBestLocation((address) => {
+          setLocation((prev) => (prev ? { ...prev, address } : null));
+        });
+        setLocation(loc);
+        setIsFetchingLocation(false);
+      }
+
+      // 2. Dispatch SOS emergency broadcast (calls Africa's Talking voice & Brevo email)
+      const res = await startSos({
+        latitude: loc.latitude,
+        longitude: loc.longitude,
+        address: loc.address,
       });
-      setLocation(loc);
-      setIsSending(true);
-      const res = await startSos(loc);
+
       if (res && res.success) {
         setAlertMessage(
           `SOS Alert Dispatched: Ringing ${res.calls?.triggered || 0} contact phone(s) & emailed ${res.emails?.sent || 0} contact(s) with Google Maps location.`
@@ -192,12 +125,28 @@ const Page = () => {
         setAlertMessage("SOS alert activated and notifications sent to your trusted contacts.");
       }
     } catch (err: unknown) {
-      setLocationError(err instanceof Error ? err.message : "Unable to retrieve location.");
+      console.error("SOS Trigger Error:", err);
+      setLocationError(err instanceof Error ? err.message : "Unable to dispatch emergency alert.");
     } finally {
       setIsFetchingLocation(false);
       setIsSending(false);
     }
   };
+
+  const handleSosClickRef = useRef(handleSosClick);
+  useEffect(() => {
+    handleSosClickRef.current = handleSosClick;
+  });
+
+  // Automatically trigger SOS when user shakes device 3 times
+  useEffect(() => {
+    const unsubscribe = registerOnTrigger(() => {
+      if (!sosActive) {
+        handleSosClickRef.current();
+      }
+    });
+    return unsubscribe;
+  }, [registerOnTrigger, sosActive]);
 
   const handleCancel = async () => {
     await stopSos();
@@ -289,19 +238,39 @@ const Page = () => {
               ${
                 sosActive
                   ? "bg-red-600 scale-105 shadow-[0_0_50px_15px_rgba(220,38,38,0.5)] ring-8 ring-red-300"
+                  : shakeCount === 2
+                  ? "bg-red-600 scale-110 shadow-[0_0_40px_10px_rgba(249,115,22,0.6)] ring-8 ring-orange-400 animate-shake-urgent"
+                  : shakeCount === 1
+                  ? "bg-red-600 scale-105 shadow-xl ring-6 ring-amber-300 animate-shake-gentle"
                   : "bg-red-600 hover:scale-105 hover:bg-red-700 shadow-xl active:scale-95 ring-4 ring-red-100"
               }
               disabled:cursor-not-allowed
             `}
           >
             <div className="flex flex-col items-center justify-center gap-2 text-center p-6">
-              <HiOutlineExclamationCircle className="text-white text-4xl" />
+              <HiOutlineExclamationCircle className={`text-white text-4xl ${shakeCount > 0 ? "animate-spin" : ""}`} />
               <span className="text-4xl font-black text-white tracking-wider">SOS</span>
               <span className="text-xs font-semibold uppercase tracking-widest text-red-100">
-                {isFetchingLocation ? "Getting GPS..." : sosActive ? "Active & Alerting" : "Tap for Emergency"}
+                {isFetchingLocation
+                  ? "Getting GPS..."
+                  : sosActive
+                  ? "Active & Alerting"
+                  : shakeCount === 2
+                  ? "Shake 2/3! One More!"
+                  : shakeCount === 1
+                  ? "Shake 1/3 Detected"
+                  : "Tap or Shake 3x"}
               </span>
             </div>
           </button>
+
+          {/* Shake Tip Indicator */}
+          {!sosActive && (
+            <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 bg-gray-100 px-3.5 py-1.5 rounded-full border border-gray-200">
+              <MdSensors className="text-red-600 animate-pulse text-base" />
+              <span>Tip: Shake device 3x in an emergency to trigger hands-free</span>
+            </div>
+          )}
 
           {/* Cancel Button */}
           {sosActive && (
@@ -332,11 +301,41 @@ const Page = () => {
               </div>
             </div>
 
-            {location && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                <FiCheckCircle /> GPS Located
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              {location && (
+                <span
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                    location.source === "gps"
+                      ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                      : location.source === "network"
+                      ? "bg-blue-100 text-blue-800 border-blue-200"
+                      : location.source === "ip"
+                      ? "bg-sky-100 text-sky-800 border-sky-200"
+                      : "bg-amber-100 text-amber-800 border-amber-200"
+                  }`}
+                >
+                  <FiCheckCircle className="shrink-0" />
+                  {location.source === "gps"
+                    ? `GPS (±${Math.round(location.accuracy)}m)`
+                    : location.source === "network"
+                    ? "Wi-Fi Triangulated"
+                    : location.source === "ip"
+                    ? "Network / IP"
+                    : "Cached Location"}
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={fetchCurrentLocation}
+                disabled={isFetchingLocation || sosActive}
+                title="Refresh location coordinates"
+                className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-100 px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+              >
+                <FiRefreshCw className={`text-xs ${isFetchingLocation ? "animate-spin text-red-600" : ""}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
+            </div>
           </div>
 
           {locationError && (
@@ -344,7 +343,9 @@ const Page = () => {
           )}
 
           {isFetchingLocation && (
-            <p className="text-sm text-gray-500 mt-3 animate-pulse">Acquiring high-accuracy GPS coordinates...</p>
+            <p className="text-sm text-gray-500 mt-3 animate-pulse">
+              Acquiring high-accuracy GPS & network coordinates...
+            </p>
           )}
 
           {location && !isFetchingLocation && (
@@ -356,7 +357,12 @@ const Page = () => {
                     {location.address || "Fetching address..."}
                   </p>
                   <p className="text-xs text-gray-500 font-mono mt-0.5">
-                    Lat: {location.latitude.toFixed(6)}, Lon: {location.longitude.toFixed(6)} (±{location.accuracy.toFixed(0)}m accuracy)
+                    Lat: {location.latitude.toFixed(6)}, Lon: {location.longitude.toFixed(6)}
+                    {location.source === "ip"
+                      ? " (detected via secure network IP)"
+                      : location.source === "cached"
+                      ? " (last recorded position)"
+                      : ` (±${Math.round(location.accuracy)}m accuracy)`}
                   </p>
                 </div>
               </div>
@@ -383,6 +389,11 @@ const Page = () => {
           )}
         </div>
       </section>
+
+      {/* Shake-to-SOS Detection Settings Card */}
+      <div className="mt-6">
+        <ShakeSettingsCard />
+      </div>
 
       {/* Trusted Contacts Overview & Direct Ring */}
       <section className="w-full bg-white border border-gray-200 rounded-2xl shadow-sm p-6 md:p-8 mt-6">

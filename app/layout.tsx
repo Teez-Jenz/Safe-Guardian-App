@@ -3,7 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Navbar from "./components/Navbar";
 import { SafetyProvider } from "./context/SafetyContext";
+import { ShakeProvider } from "./context/ShakeContext";
 import EmergencyBanner from "./components/EmergencyBanner";
+import ShakeHud from "./components/ShakeHud";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -32,9 +34,12 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <SafetyProvider>
-          <EmergencyBanner />
-          <Navbar />
-          {children}
+          <ShakeProvider>
+            <EmergencyBanner />
+            <ShakeHud />
+            <Navbar />
+            {children}
+          </ShakeProvider>
         </SafetyProvider>
       </body>
     </html>
