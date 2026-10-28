@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { supabase } from "@/lib/supabase";
+import { processOverdueCheckIns } from "@/lib/checkInWorker";
 
 const SESSION_COOKIE_NAME = "safe_guardian_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
@@ -76,8 +78,33 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const stringUserId = String(userId);
+
+  // When user logs in, automatically clear all missed check-ins and restore status to safe
+  try {
+    await supabase
+      .from("check_ins")
+      .update({ status: "cleared" })
+      .eq("user_id", stringUserId)
+      .in("status", ["missed", "overdue"]);
+
+    await supabase.from("safety_status").upsert(
+      {
+        user_id: stringUserId,
+        status: "safe",
+        last_seen: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+  } catch (cleanupErr) {
+    console.warn("Notice: unable to clear missed check-ins on login:", cleanupErr);
+  }
+
+  // Trigger opportunistic sweep for any other users' overdue check-ins
+  processOverdueCheckIns().catch(() => {});
+
   const sessionPayload: SessionPayload = {
-    userId: String(userId),
+    userId: stringUserId,
     name: name?.trim() ?? "",
     email: email?.trim() ?? "",
     phoneNumber: phoneNumber.trim(),

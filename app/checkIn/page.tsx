@@ -160,10 +160,17 @@ function SafetyCheckIn() {
               </div>
             )}
 
+            {sosAlertResult?.callError && (
+              <div className="p-2 rounded-lg bg-red-100 text-red-900 text-xs flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>Africa&apos;s Talking: {sosAlertResult.callError}</span>
+              </div>
+            )}
+
             {sosAlertResult?.emailError && (
               <div className="p-2 rounded-lg bg-red-100 text-red-900 text-xs flex items-center gap-1.5">
                 <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
-                <span>{sosAlertResult.emailError}</span>
+                <span>Brevo: {sosAlertResult.emailError}</span>
               </div>
             )}
           </div>

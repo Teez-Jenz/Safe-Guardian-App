@@ -28,6 +28,7 @@ export interface SosAlertResult {
   };
   error?: string;
   emailError?: string;
+  callError?: string;
 }
 
 interface SafetyContextType {
@@ -148,11 +149,11 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           .from("safety_status")
           .select("status")
           .eq("user_id", curUserId)
-          .single();
+          .maybeSingle();
 
-        const isDanger =
-          statusData?.status === "danger" ||
-          localStorage.getItem("sos_active") === "true";
+        const isDanger = statusData
+          ? statusData.status === "danger"
+          : localStorage.getItem("sos_active") === "true";
 
         if (isDanger) {
           setSosActive(true);
@@ -164,9 +165,13 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               console.warn("Failed to parse cached sos_alert_result:", e);
             }
           }
+        } else {
+          setSosActive(false);
+          localStorage.removeItem("sos_active");
+          localStorage.removeItem("sos_alert_result");
         }
 
-        // Load Active Check-in from DB
+        // Load Active Check-in from DB — only load ones that have NOT yet expired
         const { data: checkInData } = await supabase
           .from("check_ins")
           .select("id, activity, expected_duration_minutes, started_at, status")
@@ -177,13 +182,33 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           .maybeSingle();
 
         if (checkInData) {
-          setActiveCheckIn(checkInData);
-        } else {
-          // Check LocalStorage as fallback
-          const localCheckIn = localStorage.getItem("active_check_in");
-          if (localCheckIn) {
-            setActiveCheckIn(JSON.parse(localCheckIn));
+          // Safety guard: if the check-in is already expired (i.e. it expired while app was closed),
+          // mark it as "missed" in DB and do NOT load it into state (which would instantly trigger SOS).
+          const startedTime = new Date(checkInData.started_at).getTime();
+          const endTime = startedTime + checkInData.expected_duration_minutes * 60 * 1000;
+          const isAlreadyExpired = Date.now() > endTime;
+
+          if (isAlreadyExpired) {
+            console.warn(
+              "[SafetyContext] Check-in expired while app was closed — marking missed, skipping auto-trigger."
+            );
+            // Mark all expired active check-ins as missed in DB silently
+            await supabase
+              .from("check_ins")
+              .update({ status: "missed" })
+              .eq("user_id", curUserId)
+              .eq("status", "active");
+
+            localStorage.removeItem("active_check_in");
+            setActiveCheckIn(null);
+          } else {
+            setActiveCheckIn(checkInData);
+            localStorage.setItem("active_check_in", JSON.stringify(checkInData));
           }
+        } else {
+          // Clear any stale localStorage check-in
+          localStorage.removeItem("active_check_in");
+          setActiveCheckIn(null);
         }
       } catch (err) {
         console.error("Failed to initialize safety state:", err);
@@ -427,6 +452,21 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setActiveCheckIn(data);
       localStorage.setItem("active_check_in", JSON.stringify(data));
 
+      // Capture initial GPS location at check-in start so background workers have coordinates even if user logs out
+      let startAddress = "";
+      try {
+        const loc = await getBestLocation().catch(() => null);
+        if (loc && (loc.latitude || loc.longitude)) {
+          startAddress = loc.address ? `near ${loc.address}` : `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
+          await supabase.from("sos_alerts").insert({
+            user_id: curUserId,
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            address: loc.address || startAddress,
+          });
+        }
+      } catch {}
+
       // Update safety status to warning
       await supabase.from("safety_status").upsert(
         {
@@ -440,7 +480,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Log check-in start event to route history
       await supabase.from("route_history").insert({
         user_id: curUserId,
-        label: `⏱️ Started Check-in (${activity} for ${duration}m)`,
+        label: `⏱️ Started Check-in (${activity} for ${duration}m)${startAddress ? ` - ${startAddress}` : ""}`,
         recorded_at: new Date().toISOString(),
       });
     } catch (err) {

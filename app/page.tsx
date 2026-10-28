@@ -187,29 +187,36 @@ const Page = () => {
                 <FiPhoneCall className="text-lg shrink-0" />
                 <span>
                   <strong>Phone Ring:</strong>{" "}
-                  {sosAlertResult
-                    ? `${sosAlertResult.calls.triggered} of ${sosAlertResult.calls.total} called`
-                    : isSending
-                    ? "Dialing contact phones..."
-                    : `${contacts.filter((c) => c.phoneNumber).length} of ${contacts.filter((c) => c.phoneNumber).length} triggered`}
+                  {isSending
+                    ? "Dialing contact phones via Africa's Talking..."
+                    : sosAlertResult
+                    ? `${sosAlertResult.calls.triggered} of ${sosAlertResult.calls.total} ringing`
+                    : `0 of ${contacts.filter((c) => c.phoneNumber).length} called (Ready)`}
                 </span>
               </div>
               <div className="bg-red-700/60 p-3 rounded-lg flex items-center gap-2">
                 <FiMail className="text-lg shrink-0" />
                 <span>
                   <strong>Email Alerts:</strong>{" "}
-                  {sosAlertResult
+                  {isSending
+                    ? "Dispatching emails..."
+                    : sosAlertResult
                     ? `${sosAlertResult.emails.sent} delivered${
                         sosAlertResult.emails.failed > 0
                           ? ` (${sosAlertResult.emails.failed} failed)`
                           : ""
                       }`
-                    : isSending
-                    ? "Dispatching emails..."
-                    : `${contacts.filter((c) => c.email).length} of ${contacts.filter((c) => c.email).length} delivered`}
+                    : `0 of ${contacts.filter((c) => c.email).length} delivered (Ready)`}
                 </span>
               </div>
             </div>
+
+            {sosAlertResult?.callError && (
+              <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
+                <span className="font-bold shrink-0">⚠️ Africa's Talking Notice:</span>
+                <span>{sosAlertResult.callError}</span>
+              </div>
+            )}
 
             {sosAlertResult?.emailError && (
               <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
