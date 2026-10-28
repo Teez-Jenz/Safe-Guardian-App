@@ -24,12 +24,16 @@ function escapeXml(unsafe: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function buildVoiceXml(message: string): string {
+function buildVoiceXml(message: string, isCheckIn = false): string {
   const safeMessage = escapeXml(message);
+  const repeatText = isCheckIn
+    ? "Repeating: Safety Check-in Overdue Alert. Please check your registered email immediately for live emergency GPS location details and directions."
+    : "Repeating: Emergency SOS Alert. Please check your registered email immediately for live emergency GPS location details and directions.";
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="en-US-Standard-C">${safeMessage}</Say>
-  <Say voice="en-US-Standard-C">Repeating: Emergency SOS Alert. Please check your email immediately for live emergency GPS location details and directions.</Say>
+  <Say voice="en-US-Standard-C">${repeatText}</Say>
 </Response>`.trim();
 }
 
@@ -85,22 +89,48 @@ export async function POST(req: NextRequest) {
     }
 
     let senderName = "";
+    const isCheckInAlert = Boolean(clientRequestId && clientRequestId.toLowerCase().includes("checkin"));
 
-    // 1. Direct match via clientRequestId: sos-${userId}-${phone}
-    if (clientRequestId && clientRequestId.startsWith("sos-")) {
-      const parts = clientRequestId.split("-");
-      // Format: sos-<uuid>-<phone>
-      // UUID has 5 hyphenated segments, so rejoin segments 1 through 5
-      if (parts.length >= 6) {
-        const potentialUserId = `${parts[1]}-${parts[2]}-${parts[3]}-${parts[4]}-${parts[5]}`;
-        const { data: user } = await supabase
-          .from("users")
-          .select("name")
-          .eq("id", potentialUserId)
-          .maybeSingle();
+    // 1. Match via clientRequestId: sos_${userId}_${phone}_${tag} or sos-${userId}-${phone}
+    if (clientRequestId) {
+      if (clientRequestId.startsWith("sos_")) {
+        const parts = clientRequestId.split("_");
+        const potentialUserId = parts[1];
+        if (potentialUserId) {
+          const { data: user } = await supabase
+            .from("users")
+            .select("name")
+            .eq("id", potentialUserId)
+            .maybeSingle();
 
-        if (user?.name) {
-          senderName = user.name;
+          if (user?.name) {
+            senderName = user.name;
+          }
+        }
+      } else if (clientRequestId.startsWith("sos-")) {
+        const parts = clientRequestId.split("-");
+        if (parts.length >= 6) {
+          const potentialUserId = `${parts[1]}-${parts[2]}-${parts[3]}-${parts[4]}-${parts[5]}`;
+          const { data: user } = await supabase
+            .from("users")
+            .select("name")
+            .eq("id", potentialUserId)
+            .maybeSingle();
+
+          if (user?.name) {
+            senderName = user.name;
+          }
+        } else if (parts.length === 3) {
+          const potentialUserId = parts[1];
+          const { data: user } = await supabase
+            .from("users")
+            .select("name")
+            .eq("id", potentialUserId)
+            .maybeSingle();
+
+          if (user?.name) {
+            senderName = user.name;
+          }
         }
       }
     }
@@ -166,11 +196,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const message = senderName
-      ? `Emergency SOS Alert! Emergency SOS Alert! Your contact, ${senderName}, has triggered an emergency alert on SafeAlert Guardian and may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to ${senderName} right away!`
-      : "Emergency SOS Alert! Emergency SOS Alert! Your registered contact on SafeAlert Guardian has triggered an emergency alert and may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to them right away!";
+    let message = "";
+    if (isCheckInAlert) {
+      message = senderName
+        ? `Emergency Safety Alert! Emergency Safety Alert! Your contact, ${senderName}, started a safety check-in on SafeAlert Guardian and failed to check in on time. They may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to ${senderName} right away!`
+        : "Emergency Safety Alert! Emergency Safety Alert! A registered contact on SafeAlert Guardian has missed their safety check-in and may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to them right away!";
+    } else {
+      message = senderName
+        ? `Emergency SOS Alert! Emergency SOS Alert! Your contact, ${senderName}, has triggered an emergency alert on SafeAlert Guardian and may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to ${senderName} right away!`
+        : "Emergency SOS Alert! Emergency SOS Alert! Your registered contact on SafeAlert Guardian has triggered an emergency alert and may need immediate assistance. We have dispatched their exact GPS location and Google Maps directions to your registered email address. Please check your email immediately, or reach out to them right away!";
+    }
 
-    const xmlResponse = buildVoiceXml(message);
+    const xmlResponse = buildVoiceXml(message, isCheckInAlert);
 
     return new NextResponse(xmlResponse, {
       status: 200,

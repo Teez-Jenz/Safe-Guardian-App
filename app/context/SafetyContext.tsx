@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { getBestLocation } from "@/lib/geolocation";
 
@@ -15,6 +15,8 @@ interface ActiveCheckIn {
 export interface SosAlertResult {
   success: boolean;
   senderName?: string;
+  triggerReason?: string;
+  activity?: string;
   notifiedContactsCount: number;
   emails: { sent: number; failed: number };
   calls: { triggered: number; total: number };
@@ -32,10 +34,14 @@ interface SafetyContextType {
   sosActive: boolean;
   activeCheckIn: ActiveCheckIn | null;
   sosAlertResult: SosAlertResult | null;
-  startSos: (coords: { latitude: number; longitude: number; address?: string }) => Promise<SosAlertResult | null>;
+  startSos: (
+    coords: { latitude: number; longitude: number; address?: string },
+    options?: { triggerReason?: string; activity?: string }
+  ) => Promise<SosAlertResult | null>;
   stopSos: () => Promise<void>;
   startCheckIn: (activity: string, duration: number) => Promise<void>;
   stopCheckIn: () => Promise<void>;
+  triggerCheckInOverdue: (checkIn?: ActiveCheckIn) => Promise<SosAlertResult | null>;
   userId: string | null;
 }
 
@@ -259,7 +265,10 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   };
 
   // 4. Action: Start SOS
-  const startSos = async (loc: { latitude: number; longitude: number; address?: string }): Promise<SosAlertResult | null> => {
+  const startSos = async (
+    loc: { latitude: number; longitude: number; address?: string },
+    options?: { triggerReason?: string; activity?: string }
+  ): Promise<SosAlertResult | null> => {
     const curUserId = await getOrFetchUserId();
     if (!curUserId) {
       console.error("SOS failed: No active user session.");
@@ -276,6 +285,9 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         finalAddress = `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`;
       }
     }
+
+    const triggerReason = options?.triggerReason || "manual";
+    const activity = options?.activity;
 
     try {
       // 1. Insert into public.sos_alerts (SOS history)
@@ -297,6 +309,8 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             longitude: loc.longitude,
             address: finalAddress,
           },
+          triggerReason,
+          activity,
         }),
       });
 
@@ -328,9 +342,13 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       );
 
       // 4. Log to route history
+      const routeLabel = triggerReason === "check_in_missed"
+        ? `⚠️ Missed Check-In Alert (${activity || "Activity"}) - Emergency Dispatched near ${finalAddress || "coordinates"}`
+        : `🚨 SOS Triggered - near ${finalAddress || "coordinates"}`;
+
       await supabase.from("route_history").insert({
         user_id: curUserId,
-        label: `🚨 SOS Triggered - near ${finalAddress || "coordinates"}`,
+        label: routeLabel,
         recorded_at: new Date().toISOString(),
       });
 
@@ -349,6 +367,18 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setSosAlertResult(null);
     localStorage.removeItem("sos_active");
     localStorage.removeItem("sos_alert_result");
+
+    // If an active check-in had expired into missed status, also mark it completed
+    if (activeCheckIn && (activeCheckIn.status === "missed" || activeCheckIn.status === "overdue")) {
+      try {
+        await supabase
+          .from("check_ins")
+          .update({ status: "completed" })
+          .eq("id", activeCheckIn.id);
+      } catch {}
+      setActiveCheckIn(null);
+      localStorage.removeItem("active_check_in");
+    }
 
     try {
       // Reset safety status to safe
@@ -419,7 +449,101 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 7. Action: Stop Check-In
+  // 7. Action: Trigger Missed Check-In Emergency Alert
+  const triggeringCheckInRef = useRef<boolean>(false);
+
+  const triggerCheckInOverdue = useCallback(
+    async (checkInToAlert?: ActiveCheckIn): Promise<SosAlertResult | null> => {
+      const targetCheckIn = checkInToAlert || activeCheckIn;
+      if (!targetCheckIn) return null;
+
+      // Prevent duplicate executions
+      if (triggeringCheckInRef.current || targetCheckIn.status === "missed") {
+        return null;
+      }
+      triggeringCheckInRef.current = true;
+
+      const curUserId = await getOrFetchUserId();
+      if (!curUserId) {
+        triggeringCheckInRef.current = false;
+        return null;
+      }
+
+      console.log(
+        `[SafetyContext] Check-in overdue! Triggering emergency alert for activity: ${targetCheckIn.activity}`
+      );
+
+      // 1. Mark check-in record status as missed in Supabase
+      try {
+        await supabase
+          .from("check_ins")
+          .update({ status: "missed" })
+          .eq("id", targetCheckIn.id);
+      } catch (err) {
+        console.warn("Failed to mark check-in as missed in Supabase:", err);
+      }
+
+      const updatedCheckIn = { ...targetCheckIn, status: "missed" };
+      setActiveCheckIn(updatedCheckIn);
+      try {
+        localStorage.setItem("active_check_in", JSON.stringify(updatedCheckIn));
+      } catch {}
+
+      // 2. Resolve GPS coordinates
+      let locCoords: { latitude: number; longitude: number; address?: string };
+      try {
+        const loc = await getBestLocation();
+        locCoords = {
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          address: loc.address,
+        };
+      } catch {
+        locCoords = { latitude: 0, longitude: 0, address: "Approximate location unavailable" };
+      }
+
+      // 3. Vibration alert if available
+      try {
+        if (typeof window !== "undefined" && "vibrate" in navigator) {
+          navigator.vibrate([500, 200, 500, 200, 500]);
+        }
+      } catch {}
+
+      // 4. Dispatch emergency SOS alert to Brevo email & Africa's Talking Voice
+      const result = await startSos(locCoords, {
+        triggerReason: "check_in_missed",
+        activity: targetCheckIn.activity,
+      });
+
+      triggeringCheckInRef.current = false;
+      return result;
+    },
+    [activeCheckIn, getOrFetchUserId, startSos]
+  );
+
+  // 8. Background Check-In Expiration Watcher
+  useEffect(() => {
+    if (!activeCheckIn || activeCheckIn.status !== "active") return;
+
+    const checkExpiration = () => {
+      const startedTime = new Date(activeCheckIn.started_at).getTime();
+      const expectedDurationMs = activeCheckIn.expected_duration_minutes * 60 * 1000;
+      const endTime = startedTime + expectedDurationMs;
+      const remainingSec = Math.floor((endTime - Date.now()) / 1000);
+
+      if (remainingSec <= 0) {
+        triggerCheckInOverdue(activeCheckIn);
+      }
+    };
+
+    // Check immediately upon mount/update
+    checkExpiration();
+
+    const interval = setInterval(checkExpiration, 1000);
+    return () => clearInterval(interval);
+  }, [activeCheckIn, triggerCheckInOverdue]);
+
+  // 9. Action: Stop Check-In
   const stopCheckIn = async () => {
     const curUserId = await getOrFetchUserId();
     if (!curUserId || !activeCheckIn) return;
@@ -434,6 +558,14 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const oldActivity = activeCheckIn.activity;
       setActiveCheckIn(null);
       localStorage.removeItem("active_check_in");
+
+      // Also reset SOS if it was triggered by overdue check-in
+      if (sosActive) {
+        setSosActive(false);
+        setSosAlertResult(null);
+        localStorage.removeItem("sos_active");
+        localStorage.removeItem("sos_alert_result");
+      }
 
       // Reset safety status to safe
       await supabase.from("safety_status").upsert(
@@ -466,6 +598,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         stopSos,
         startCheckIn,
         stopCheckIn,
+        triggerCheckInOverdue,
         userId,
       }}
     >

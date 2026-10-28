@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Clock, ChevronDown, ShieldAlert } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Clock, ChevronDown, ShieldAlert, PhoneCall, Mail, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useSafety } from "../context/SafetyContext";
 
 const ACTIVITIES = [
@@ -15,9 +15,9 @@ const ACTIVITIES = [
 ];
 
 const DURATIONS = [
-  {label: "1 minutes", minutes: 1},
-  {label: "2 minutes", minutes: 2},
-  {label: "3 minutes", minutes: 3},
+  { label: "1 minute", minutes: 1 },
+  { label: "2 minutes", minutes: 2 },
+  { label: "3 minutes", minutes: 3 },
   { label: "5 minutes", minutes: 5 },
   { label: "10 minutes", minutes: 10 },
   { label: "15 minutes", minutes: 15 },
@@ -29,16 +29,28 @@ const DURATIONS = [
 ];
 
 function SafetyCheckIn() {
-  const { activeCheckIn, startCheckIn, stopCheckIn } = useSafety();
+  const {
+    activeCheckIn,
+    startCheckIn,
+    stopCheckIn,
+    sosActive,
+    sosAlertResult,
+    triggerCheckInOverdue,
+  } = useSafety();
+
   const [activity, setActivity] = useState("");
   const [duration, setDuration] = useState(30);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState(0);
+  const triggeredRef = useRef(false);
 
   // Countdown timer logic
   useEffect(() => {
-    if (!activeCheckIn) return;
+    if (!activeCheckIn) {
+      triggeredRef.current = false;
+      return;
+    }
 
     const calculateTimeLeft = () => {
       const startedTime = new Date(activeCheckIn.started_at).getTime();
@@ -46,13 +58,19 @@ function SafetyCheckIn() {
       const endTime = startedTime + expectedDurationMs;
       const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
       setTimeLeft(remaining);
+
+      // Trigger overdue alert immediately if countdown expired and hasn't yet triggered
+      if (remaining <= 0 && activeCheckIn.status === "active" && !triggeredRef.current) {
+        triggeredRef.current = true;
+        triggerCheckInOverdue(activeCheckIn);
+      }
     };
 
     calculateTimeLeft();
     const interval = setInterval(calculateTimeLeft, 1000);
 
     return () => clearInterval(interval);
-  }, [activeCheckIn]);
+  }, [activeCheckIn, triggerCheckInOverdue]);
 
   async function handleStartCheckIn() {
     if (!activity) {
@@ -81,32 +99,81 @@ function SafetyCheckIn() {
   };
 
   if (activeCheckIn) {
-    const isOverdue = timeLeft === 0;
+    const isOverdue = timeLeft === 0 || activeCheckIn.status === "missed";
 
     return (
-      <div className="w-full max-w-2xl rounded-3xl bg-white p-8 shadow-sm ring-1 ring-gray-100 border border-gray-100 flex flex-col items-center">
-        <h1 className="text-xl font-bold text-gray-900 mb-2">Active Check-In</h1>
+      <div className="w-full max-w-2xl rounded-3xl bg-white p-6 md:p-8 shadow-sm ring-1 ring-gray-100 border border-gray-100 flex flex-col items-center">
+        <h1 className="text-xl font-bold text-gray-900 mb-1">Active Safety Check-In</h1>
         <p className="text-sm text-gray-500 mb-6 text-center">
-          We are tracking your location. Check in before the timer expires to let everyone know you are safe.
+          {isOverdue
+            ? "Your scheduled timer expired without a safety confirmation. Emergency alerts have been broadcast."
+            : "We are monitoring your safety. Check in before the timer expires to confirm you arrived safely."}
         </p>
 
         {/* Big Timer */}
-        <div className={`text-6xl font-black mb-4 tracking-wider tabular-nums ${isOverdue ? "text-red-600 animate-pulse" : "text-black"}`}>
+        <div
+          className={`text-6xl font-black mb-4 tracking-wider tabular-nums ${
+            isOverdue ? "text-red-600 animate-pulse" : "text-gray-900"
+          }`}
+        >
           {formatTime(timeLeft)}
         </div>
 
-        {isOverdue && (
-          <div className="flex items-center gap-2 text-red-600 text-sm font-semibold mb-6 animate-bounce">
-            <ShieldAlert className="w-4 h-4" />
-            <span>Check-in is overdue! Contacts may be notified.</span>
+        {/* Overdue Alert Banner & Actions */}
+        {isOverdue ? (
+          <div className="w-full mb-6 bg-red-50 border-2 border-red-500 rounded-2xl p-5 text-red-950 space-y-3">
+            <div className="flex items-center gap-2 text-red-700 font-bold text-base">
+              <ShieldAlert className="w-6 h-6 shrink-0 animate-bounce text-red-600" />
+              <span>🚨 MISSED CHECK-IN: EMERGENCY ALERT ACTIVATED</span>
+            </div>
+            <p className="text-xs text-red-800 leading-relaxed">
+              Your timer for <strong>{activeCheckIn.activity}</strong> expired. Automated phone calls are dialing your trusted contacts and high-priority emails with your GPS coordinates have been dispatched.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-red-200 text-xs">
+              <div className="flex items-center gap-2 bg-white/80 p-2.5 rounded-xl border border-red-200">
+                <PhoneCall className="w-4 h-4 text-red-600 shrink-0" />
+                <span>
+                  <strong>Phone Ring:</strong>{" "}
+                  {sosAlertResult?.calls
+                    ? `${sosAlertResult.calls.triggered} of ${sosAlertResult.calls.total} called`
+                    : "Dialing trusted contact phones..."}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 bg-white/80 p-2.5 rounded-xl border border-red-200">
+                <Mail className="w-4 h-4 text-red-600 shrink-0" />
+                <span>
+                  <strong>Email:</strong>{" "}
+                  {sosAlertResult?.emails
+                    ? `${sosAlertResult.emails.sent} sent with GPS`
+                    : "Delivering email notifications..."}
+                </span>
+              </div>
+            </div>
+
+            {sosAlertResult?.location?.address && (
+              <div className="flex items-start gap-2 bg-white/80 p-2.5 rounded-xl border border-red-200 text-xs text-gray-700">
+                <MapPin className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <span className="line-clamp-2">
+                  <strong>Dispatched Location:</strong> {sosAlertResult.location.address}
+                </span>
+              </div>
+            )}
+
+            {sosAlertResult?.emailError && (
+              <div className="p-2 rounded-lg bg-red-100 text-red-900 text-xs flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{sosAlertResult.emailError}</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Normal Tracking indicator */
+          <div className="flex items-center gap-2 text-emerald-600 text-xs font-semibold px-3 py-1 bg-emerald-50 rounded-full mb-6">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+            <span>GPS Location Tracking Active</span>
           </div>
         )}
-
-        {/* Tracking indicator */}
-        <div className="flex items-center gap-2 text-emerald-600 text-xs font-semibold px-3 py-1 bg-emerald-50 rounded-full mb-6">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-          <span>GPS Location Tracking Active</span>
-        </div>
 
         {/* Details Card */}
         <div className="w-full bg-gray-50 border border-gray-100 rounded-2xl p-5 mb-6 space-y-3">
@@ -124,15 +191,40 @@ function SafetyCheckIn() {
               {new Date(activeCheckIn.started_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
             </span>
           </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-500">Status</span>
+            <span
+              className={`font-semibold capitalize text-xs px-2.5 py-0.5 rounded-full border ${
+                isOverdue
+                  ? "bg-red-100 text-red-800 border-red-200"
+                  : "bg-emerald-100 text-emerald-800 border-emerald-200"
+              }`}
+            >
+              {isOverdue ? "Overdue / Alert Dispatched" : activeCheckIn.status}
+            </span>
+          </div>
         </div>
 
-        {/* Stop button */}
+        {/* Stop / Cancel button */}
         <button
           onClick={stopCheckIn}
-          className="w-full bg-gray-900 hover:bg-black text-white py-3.5 rounded-xl font-bold transition shadow-md flex items-center justify-center gap-2 cursor-pointer"
+          className={`w-full py-4 rounded-xl font-bold transition shadow-md flex items-center justify-center gap-2 cursor-pointer ${
+            isOverdue
+              ? "bg-red-600 hover:bg-red-700 text-white shadow-red-200"
+              : "bg-gray-900 hover:bg-black text-white"
+          }`}
         >
-          <Clock className="w-5 h-5" />
-          <span>I am Safe (Stop Check-In)</span>
+          {isOverdue ? (
+            <>
+              <CheckCircle2 className="w-5 h-5 text-white" />
+              <span>I Am Safe (Cancel Emergency & Stop Check-In)</span>
+            </>
+          ) : (
+            <>
+              <Clock className="w-5 h-5" />
+              <span>I am Safe (Stop Check-In)</span>
+            </>
+          )}
         </button>
       </div>
     );

@@ -79,7 +79,14 @@ export async function initiateVoiceCall(
 
     const data: AfricasTalkingCallResponse = await response.json().catch(() => ({}));
 
-    if (!response.ok || data.errorMessage) {
+    // Africa's Talking returns errorMessage: "None" when the call request is successfully queued!
+    const hasRealError =
+      !response.ok ||
+      (Boolean(data.errorMessage) &&
+        data.errorMessage?.toLowerCase() !== "none" &&
+        data.errorMessage?.trim() !== "");
+
+    if (hasRealError) {
       const errorMsg =
         data.errorMessage ||
         `Africa's Talking Voice HTTP ${response.status}: ${response.statusText || "Request failed"}`;
@@ -92,16 +99,24 @@ export async function initiateVoiceCall(
     }
 
     const entries = data.entries || [];
-    const hasSuccessfulEntry = entries.some(
-      (entry) =>
-        entry.status === "Queued" ||
-        entry.status === "Success" ||
-        entry.status === "InProgress",
-    );
+    const hasSuccessfulEntry = entries.some((entry) => {
+      const status = (entry.status || "").toLowerCase();
+      return (
+        status === "queued" ||
+        status === "success" ||
+        status === "inprogress"
+      );
+    });
+
+    const failedEntry = entries.find((entry) => {
+      const status = (entry.status || "").toLowerCase();
+      return status !== "queued" && status !== "success" && status !== "inprogress";
+    });
 
     return {
       success: hasSuccessfulEntry || entries.length === 0,
       entries,
+      error: failedEntry ? `Entry status: ${failedEntry.status}` : undefined,
       raw: data,
     };
   } catch (err) {

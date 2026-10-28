@@ -32,7 +32,7 @@ function formatToE164(phone: string, defaultCountryCode = "+234"): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { userId, location } = body;
+    const { userId, location, triggerReason, activity } = body;
 
     if (!userId || !location) {
       return NextResponse.json(
@@ -41,10 +41,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Rate Limiting / De-duplication check: if triggered recently, return cached response so dashboard numbers persist
+    const isCheckInMissed = triggerReason === "check_in_missed";
+    const activityName = activity || "scheduled activity";
+
+    // Rate Limiting / De-duplication check: if triggered recently (unless it's an urgent missed check-in)
     const now = Date.now();
     const lastRequestTime = recentSosRequests.get(userId);
-    if (lastRequestTime && now - lastRequestTime < SOS_COOLDOWN_MS) {
+    if (!isCheckInMissed && lastRequestTime && now - lastRequestTime < SOS_COOLDOWN_MS) {
       const prev = lastSosResponses.get(userId);
       if (prev) {
         return NextResponse.json(
@@ -110,6 +113,22 @@ export async function POST(req: NextRequest) {
       timeStyle: "medium",
     });
 
+    const emailSubject = isCheckInMissed
+      ? `🚨 MISSED CHECK-IN ALERT: ${senderName} did not check in safely (${activityName})!`
+      : `🚨 EMERGENCY SOS ALERT: ${senderName} needs immediate assistance!`;
+
+    const emailHeaderTitle = isCheckInMissed
+      ? "MISSED SAFETY CHECK-IN ALERT"
+      : "EMERGENCY SOS ALERT";
+
+    const emailHeaderSubtitle = isCheckInMissed
+      ? `Safety Check-In Expired for ${activityName}`
+      : "Immediate Attention Required";
+
+    const emailCalloutText = isCheckInMissed
+      ? `⚠️ <strong>${senderName}</strong> started a safety check-in for <strong>&quot;${activityName}&quot;</strong> on SafeAlert Guardian, but has missed their check-in deadline without confirming safety. Their emergency alert has been automatically triggered. Please check their GPS location below and reach out immediately!`
+      : `⚠️ <strong>${senderName}</strong> has triggered an SOS emergency signal and may be in danger. Please check their location below and contact them or emergency services immediately!`;
+
     // 3. Send Email Alerts via Brevo
     const emailPromises = contacts
       .filter((contact) => contact.email && contact.email.trim().length > 0)
@@ -120,14 +139,14 @@ export async function POST(req: NextRequest) {
 
         const emailResult = await sendBrevoEmail({
           to: [{ email: contact.email.trim(), name: contact.name }],
-          subject: `🚨 EMERGENCY SOS ALERT: ${senderName} needs immediate assistance!`,
+          subject: emailSubject,
           htmlContent: `
           <!DOCTYPE html>
           <html lang="en">
             <head>
               <meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>SOS Alert</title>
+              <title>${emailHeaderTitle}</title>
             </head>
             <body style="margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f3f4f6; color: #1f2937;">
               <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(220, 38, 38, 0.15); border: 1px solid #fee2e2;">
@@ -136,8 +155,8 @@ export async function POST(req: NextRequest) {
                 <tr>
                   <td style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); padding: 36px 24px; text-align: center;">
                     <div style="font-size: 40px; line-height: 1; margin-bottom: 12px;">🚨</div>
-                    <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">EMERGENCY SOS ALERT</h1>
-                    <p style="color: #fecaca; margin: 8px 0 0; font-size: 15px; font-weight: 500;">Immediate Attention Required</p>
+                    <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">${emailHeaderTitle}</h1>
+                    <p style="color: #fecaca; margin: 8px 0 0; font-size: 15px; font-weight: 500;">${emailHeaderSubtitle}</p>
                   </td>
                 </tr>
 
@@ -152,7 +171,7 @@ export async function POST(req: NextRequest) {
 
                     <div style="background-color: #fef2f2; border-left: 4px solid #dc2626; padding: 16px; border-radius: 6px; margin: 20px 0;">
                       <p style="margin: 0; font-size: 15px; font-weight: 600; color: #991b1b;">
-                        ⚠️ <strong>${senderName}</strong> has triggered an SOS emergency signal and may be in danger. Please check their location below and contact them or emergency services immediately!
+                        ${emailCalloutText}
                       </p>
                     </div>
 
@@ -280,7 +299,8 @@ export async function POST(req: NextRequest) {
           };
         }
 
-        const clientRequestId = `sos-${userId}-${contact.phone_number.replace(/\D/g, "")}`;
+        const alertTag = isCheckInMissed ? "checkin" : "sos";
+        const clientRequestId = `sos_${userId}_${contact.phone_number.replace(/\D/g, "")}_${alertTag}`;
         const callResult = await initiateVoiceCall({
           to: formattedTo,
           clientRequestId,
@@ -326,6 +346,8 @@ export async function POST(req: NextRequest) {
     const responsePayload = {
       success: true,
       senderName,
+      triggerReason: isCheckInMissed ? "check_in_missed" : "manual",
+      activity: isCheckInMissed ? activityName : undefined,
       location: {
         latitude: lat,
         longitude: lon,
