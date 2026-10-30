@@ -30,12 +30,15 @@ const Page = () => {
   const [isSending, setIsSending] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
 
-  const fetchCurrentLocation = useCallback(async () => {
+  const fetchCurrentLocation = useCallback(async (forceFresh = false) => {
     setIsFetchingLocation(true);
     setLocationError("");
     try {
-      const loc = await getBestLocation((address) => {
-        setLocation((prev) => (prev ? { ...prev, address } : null));
+      const loc = await getBestLocation({
+        forceFresh,
+        onAddressUpdate: (address) => {
+          setLocation((prev) => (prev ? { ...prev, address } : null));
+        },
       });
       setLocation(loc);
       return loc;
@@ -49,7 +52,7 @@ const Page = () => {
 
   // Warm-up location proactively on page mount
   useEffect(() => {
-    fetchCurrentLocation();
+    fetchCurrentLocation(false);
   }, [fetchCurrentLocation]);
 
   useEffect(() => {
@@ -103,8 +106,11 @@ const Page = () => {
       let loc = location;
       if (!loc || (!loc.latitude && !loc.longitude)) {
         setIsFetchingLocation(true);
-        loc = await getBestLocation((address) => {
-          setLocation((prev) => (prev ? { ...prev, address } : null));
+        loc = await getBestLocation({
+          forceFresh: true,
+          onAddressUpdate: (address) => {
+            setLocation((prev) => (prev ? { ...prev, address } : null));
+          },
         });
         setLocation(loc);
         setIsFetchingLocation(false);
@@ -341,16 +347,29 @@ const Page = () => {
 
               <button
                 type="button"
-                onClick={fetchCurrentLocation}
+                onClick={() => fetchCurrentLocation(true)}
                 disabled={isFetchingLocation || sosActive}
-                title="Refresh location coordinates"
-                className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900 bg-white hover:bg-gray-100 px-2.5 py-1.5 rounded-lg border border-gray-200 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+                title="Force refresh high-accuracy GPS coordinates"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700 hover:text-black bg-white hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-300 shadow-2xs transition disabled:opacity-50 cursor-pointer"
               >
                 <FiRefreshCw className={`text-xs ${isFetchingLocation ? "animate-spin text-red-600" : ""}`} />
-                <span className="hidden sm:inline">Refresh</span>
+                <span>{isFetchingLocation ? "Locking GPS..." : "Refresh GPS"}</span>
               </button>
             </div>
           </div>
+
+          {location?.source === "ip" && !isFetchingLocation && (
+            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-xs text-amber-900">
+              <span className="text-base shrink-0">⚠️</span>
+              <div>
+                <p className="font-semibold">Showing approximate Network/IP location</p>
+                <p className="text-amber-800 mt-0.5">
+                  Your browser or operating system has not granted precise GPS permission, or GPS timed out.
+                  Click the <strong>Refresh GPS</strong> button above or check your browser address bar permissions (tap the lock icon 🔒 next to the URL and set Location to <em>Allow</em>) for pinpoint meter-level accuracy.
+                </p>
+              </div>
+            </div>
+          )}
 
           {locationError && (
             <p className="text-sm font-medium text-red-600 mt-3">{locationError}</p>
