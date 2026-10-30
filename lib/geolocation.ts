@@ -3,11 +3,64 @@ export interface LocationResult {
   longitude: number;
   accuracy: number;
   address?: string;
-  source: "gps" | "network" | "ip" | "cached" | "fallback";
+  source: "gps" | "network" | "manual" | "ip" | "cached" | "fallback";
   timestamp: number;
+  errorDetail?: string;
 }
 
 const STORAGE_KEY = "safeguardian_last_location";
+const MANUAL_LOCATION_KEY = "safeguardian_manual_location";
+
+export interface ManualLocation {
+  latitude: number;
+  longitude: number;
+  address: string;
+}
+
+/**
+ * Gets user-saved custom physical location if set
+ */
+export function getSavedManualLocation(): ManualLocation | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(MANUAL_LOCATION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.latitude === "number" && typeof parsed.longitude === "number") {
+      return parsed;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Saves user-verified custom physical location
+ */
+export function saveManualLocation(loc: ManualLocation): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(MANUAL_LOCATION_KEY, JSON.stringify(loc));
+    // Also update main cache
+    cacheLocation({
+      latitude: loc.latitude,
+      longitude: loc.longitude,
+      accuracy: 10,
+      address: loc.address,
+      source: "manual",
+      timestamp: Date.now(),
+    });
+  } catch {}
+}
+
+/**
+ * Clears saved manual location
+ */
+export function clearManualLocation(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(MANUAL_LOCATION_KEY);
+  } catch {}
+}
 
 /**
  * Retrieves the last known location cached in browser localStorage.
@@ -26,9 +79,7 @@ export function getLastCachedLocation(): LocationResult | null {
     ) {
       return parsed;
     }
-  } catch {
-    // Ignore JSON parse errors
-  }
+  } catch {}
   return null;
 }
 
@@ -38,16 +89,13 @@ export function getLastCachedLocation(): LocationResult | null {
 export function cacheLocation(loc: LocationResult): void {
   if (typeof window === "undefined") return;
   try {
-    // Don't cache 0,0 fallbacks
     if (!loc.latitude && !loc.longitude) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(loc));
-  } catch {
-    // Ignore storage quota errors
-  }
+  } catch {}
 }
 
 /**
- * Clears cached location (useful when switching networks or forcing fresh GPS lock)
+ * Clears cached location
  */
 export function clearCachedLocation(): void {
   if (typeof window === "undefined") return;
@@ -58,14 +106,11 @@ export function clearCachedLocation(): void {
 
 /**
  * Resilient reverse geocoding with multiple fallback providers.
- * 1. OpenStreetMap Nominatim
- * 2. BigDataCloud Reverse Geocode Client API
- * 3. Formatted lat/lon fallback
  */
 export async function reverseGeocode(lat: number, lon: number): Promise<string> {
   if (!lat && !lon) return "Location coordinates unavailable";
 
-  // Provider 1: Nominatim (4s timeout)
+  // Provider 1: Nominatim (OpenStreetMap)
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -88,20 +133,20 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
       if (addr) {
         const parts = [
           addr.house_number,
-          addr.road || addr.pedestrian || addr.footway,
-          addr.suburb || addr.neighbourhood || addr.quarter,
-          addr.city || addr.town || addr.village || addr.county,
+          addr.road || addr.pedestrian || addr.footway || addr.suburb,
+          addr.neighbourhood || addr.quarter || addr.suburb,
+          addr.city || addr.town || addr.village || addr.state_district,
+          addr.state,
         ].filter(Boolean);
 
-        if (parts.length > 0) return parts.join(", ");
+        const uniqueParts = Array.from(new Set(parts));
+        if (uniqueParts.length > 0) return uniqueParts.join(", ");
       }
       if (data.display_name) return data.display_name;
     }
-  } catch {
-    // Nominatim timed out or failed, try next provider
-  }
+  } catch {}
 
-  // Provider 2: BigDataCloud Reverse Geocoding (3.5s timeout)
+  // Provider 2: BigDataCloud Reverse Geocoding
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -126,18 +171,55 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string> 
         return uniqueParts.join(", ");
       }
     }
-  } catch {
-    // BigDataCloud failed or timed out
-  }
+  } catch {}
 
   return `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
 }
 
 /**
- * Fetches location via IP-based Geolocation services.
- * NOTE: IP addresses resolve to internet service provider (ISP) hubs or server data centers,
- * which may be miles or cities away from the user's actual physical location.
- * Used strictly as a last-resort fallback.
+ * Searches places/addresses by query string (Forward Geocoding)
+ * Allows users to type their current exact street/neighborhood address
+ */
+export async function searchAddress(query: string): Promise<Array<{
+  displayName: string;
+  latitude: number;
+  longitude: number;
+}>> {
+  if (!query || query.trim().length < 2) return [];
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
+
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query.trim())}&limit=5&addressdetails=1`,
+      {
+        headers: {
+          "Accept-Language": "en",
+          "User-Agent": "SafeGuardianApp/1.0",
+        },
+        signal: controller.signal,
+      }
+    );
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data.map((item) => ({
+          displayName: item.display_name,
+          latitude: parseFloat(item.lat),
+          longitude: parseFloat(item.lon),
+        }));
+      }
+    }
+  } catch {}
+
+  return [];
+}
+
+/**
+ * Fetches location via IP-based Geolocation services (Last Resort)
  */
 async function fetchIpLocation(): Promise<LocationResult | null> {
   // Provider 1: ipapi.co
@@ -206,9 +288,6 @@ async function fetchIpLocation(): Promise<LocationResult | null> {
 
 /**
  * Attempts real device GPS/Wi-Fi positioning via HTML5 navigator.geolocation.
- * Uses watchPosition instead of getCurrentPosition because watchPosition can stream
- * consecutive location fixes on mobile/laptops and locks onto real hardware GPS
- * much more reliably than a single one-shot query.
  */
 function attemptBrowserGeolocation(
   enableHighAccuracy: boolean,
@@ -227,7 +306,7 @@ function attemptBrowserGeolocation(
       if (!settled) {
         settled = true;
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        reject(new Error(`Browser geolocation timed out after ${timeoutMs}ms`));
+        reject(new Error(`GPS search timed out after ${Math.round(timeoutMs / 1000)}s`));
       }
     }, timeoutMs);
 
@@ -249,7 +328,15 @@ function attemptBrowserGeolocation(
         settled = true;
         clearTimeout(timer);
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        reject(err);
+        let msg = "Location lookup failed";
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = "Permission denied: Location access was blocked in your browser or operating system";
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          msg = "Location position unavailable: No satellite/Wi-Fi fix available";
+        } else if (err.code === err.TIMEOUT) {
+          msg = "GPS timed out waiting for hardware fix";
+        }
+        reject(new Error(msg));
       }
     };
 
@@ -270,21 +357,6 @@ function attemptBrowserGeolocation(
   });
 }
 
-/**
- * Checks the browser's Geolocation permission state if supported.
- */
-export async function getGeolocationPermissionStatus(): Promise<"granted" | "prompt" | "denied" | "unsupported"> {
-  if (typeof window === "undefined" || !navigator.permissions || !navigator.permissions.query) {
-    return "unsupported";
-  }
-  try {
-    const res = await navigator.permissions.query({ name: "geolocation" as PermissionName });
-    return res.state;
-  } catch {
-    return "unsupported";
-  }
-}
-
 export interface GetBestLocationOptions {
   forceFresh?: boolean;
   onAddressUpdate?: (address: string) => void;
@@ -293,13 +365,12 @@ export interface GetBestLocationOptions {
 /**
  * Multi-Tier Accurate Location Resolver
  *
- * Prioritizes REAL physical GPS / Wi-Fi hardware over ISP IP address:
- *
- * Tier 1: Real GPS High Accuracy (enableHighAccuracy: true, 10s timeout, maxAge: 0 if forceFresh)
- * Tier 2: Real Wi-Fi / Cell Tower Triangulation (enableHighAccuracy: false, 6s timeout)
- * Tier 3: Last known REAL GPS/Network cached location from localStorage (if fresher than 1 hour)
- * Tier 4: IP-based ISP Geolocation (Last resort: approximate city level)
- * Tier 5: Safe fallback
+ * 1. User manual override (if user set exact location, respect it!)
+ * 2. Real GPS Hardware (High Accuracy)
+ * 3. Wi-Fi / Cell Triangulation (Low Accuracy)
+ * 4. Recent Real GPS / Manual cached position
+ * 5. IP-based ISP Geolocation (Last resort)
+ * 6. Fallback
  */
 export async function getBestLocation(
   optionsOrCallback?: ((address: string) => void) | GetBestLocationOptions
@@ -311,7 +382,24 @@ export async function getBestLocation(
 
   const { forceFresh = false, onAddressUpdate } = options;
 
-  // Tier 1: True GPS / Hardware High Accuracy (10 second window to lock satellites / Wi-Fi)
+  // Tier 0: User-verified manual location (highest accuracy when device lacks GPS hardware)
+  const manual = getSavedManualLocation();
+  if (manual && !forceFresh) {
+    const manualResult: LocationResult = {
+      latitude: manual.latitude,
+      longitude: manual.longitude,
+      accuracy: 10,
+      address: manual.address,
+      source: "manual",
+      timestamp: Date.now(),
+    };
+    onAddressUpdate?.(manual.address);
+    return manualResult;
+  }
+
+  let gpsErrorReason = "";
+
+  // Tier 1: Real GPS / Hardware High Accuracy (10 second window)
   try {
     const coords = await attemptBrowserGeolocation(
       true,
@@ -329,7 +417,6 @@ export async function getBestLocation(
 
     cacheLocation(result);
 
-    // Asynchronously reverse geocode without blocking coordinate return
     reverseGeocode(coords.latitude, coords.longitude).then((addr) => {
       result.address = addr;
       cacheLocation(result);
@@ -337,8 +424,9 @@ export async function getBestLocation(
     });
 
     return result;
-  } catch (err1) {
-    console.warn("Tier 1 GPS High Accuracy lock failed or timed out:", err1);
+  } catch (err1: unknown) {
+    gpsErrorReason = err1 instanceof Error ? err1.message : String(err1);
+    console.warn("Tier 1 GPS High Accuracy lock failed:", gpsErrorReason);
   }
 
   // Tier 2: Real Browser Standard/Low Accuracy (Wi-Fi / Cell triangulation, 6 seconds)
@@ -366,23 +454,38 @@ export async function getBestLocation(
     });
 
     return result;
-  } catch (err2) {
-    console.warn("Tier 2 Wi-Fi/Cell Triangulation failed or timed out:", err2);
+  } catch (err2: unknown) {
+    if (!gpsErrorReason) {
+      gpsErrorReason = err2 instanceof Error ? err2.message : String(err2);
+    }
+    console.warn("Tier 2 Wi-Fi/Cell Triangulation failed:", err2);
   }
 
-  // Tier 3: If user has a previously cached REAL GPS / Network location that is relatively recent (within 24 hours),
-  // prefer it over a completely wrong ISP IP address in a different state/country!
+  // Tier 3: If manual location exists, return it even if forceFresh was true but hardware GPS failed
+  if (manual) {
+    const manualResult: LocationResult = {
+      latitude: manual.latitude,
+      longitude: manual.longitude,
+      accuracy: 10,
+      address: manual.address,
+      source: "manual",
+      timestamp: Date.now(),
+    };
+    onAddressUpdate?.(manual.address);
+    return manualResult;
+  }
+
+  // Tier 4: Recent cached GPS / Network location
   const cached = getLastCachedLocation();
-  if (cached && (cached.source === "gps" || cached.source === "network")) {
+  if (cached && (cached.source === "gps" || cached.source === "network" || cached.source === "manual")) {
     const ageHours = (Date.now() - cached.timestamp) / (1000 * 60 * 60);
     if (ageHours < 24) {
-      console.log(`Using recent cached physical location from ${cached.source} (${Math.round(ageHours)}h old)`);
       const cachedResult: LocationResult = {
         ...cached,
         source: "cached",
         address: cached.address
-          ? `${cached.address} (last known GPS)`
-          : "Last known recorded GPS location",
+          ? `${cached.address} (last recorded)`
+          : "Last recorded location",
       };
       if (cachedResult.address) {
         onAddressUpdate?.(cachedResult.address);
@@ -391,10 +494,11 @@ export async function getBestLocation(
     }
   }
 
-  // Tier 4: IP-based Geolocation (Last resort when GPS is blocked by browser permissions or unsupported)
+  // Tier 5: IP-based Geolocation (Last resort when GPS hardware is unavailable)
   try {
     const ipLoc = await fetchIpLocation();
     if (ipLoc) {
+      ipLoc.errorDetail = gpsErrorReason || "Hardware GPS not responding; approximate ISP hub used";
       cacheLocation(ipLoc);
       if (ipLoc.address) {
         onAddressUpdate?.(ipLoc.address);
@@ -402,22 +506,7 @@ export async function getBestLocation(
       return ipLoc;
     }
   } catch (err3) {
-    console.warn("Tier 4 IP Geolocation failed:", err3);
-  }
-
-  // Tier 5: Older cached location
-  if (cached) {
-    const cachedResult: LocationResult = {
-      ...cached,
-      source: "cached",
-      address: cached.address
-        ? `${cached.address} (last recorded)`
-        : "Last recorded location",
-    };
-    if (cachedResult.address) {
-      onAddressUpdate?.(cachedResult.address);
-    }
-    return cachedResult;
+    console.warn("Tier 5 IP Geolocation failed:", err3);
   }
 
   // Tier 6: Emergency safe fallback
@@ -425,9 +514,10 @@ export async function getBestLocation(
     latitude: 0,
     longitude: 0,
     accuracy: 0,
-    address: "Location unavailable (Please allow browser Location permissions)",
+    address: "Location unavailable (GPS & Network timed out)",
     source: "fallback",
     timestamp: Date.now(),
+    errorDetail: gpsErrorReason,
   };
 
   onAddressUpdate?.(emergencyFallback.address!);

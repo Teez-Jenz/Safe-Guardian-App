@@ -4,13 +4,14 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { HiOutlineExclamationCircle } from "react-icons/hi2";
 import { GrLocation } from "react-icons/gr";
 import { MdCancel, MdSensors } from "react-icons/md";
-import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle, FiRefreshCw } from "react-icons/fi";
+import { FiPhoneCall, FiMail, FiMapPin, FiCheckCircle, FiRefreshCw, FiEdit3 } from "react-icons/fi";
 import { useSafety } from "./context/SafetyContext";
 import { useShake } from "./context/ShakeContext";
 import { supabase } from "@/lib/supabase";
 import { getBestLocation, LocationResult } from "@/lib/geolocation";
 import EnableNotifications from "./components/EnableNotifications";
 import ShakeSettingsCard from "./components/ShakeSettingsCard";
+import LocationModal from "./components/LocationModal";
 
 interface Contact {
   name: string;
@@ -29,6 +30,7 @@ const Page = () => {
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
+  const [showLocationModal, setShowLocationModal] = useState(false);
 
   const fetchCurrentLocation = useCallback(async (forceFresh = false) => {
     setIsFetchingLocation(true);
@@ -327,6 +329,8 @@ const Page = () => {
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
                     location.source === "gps"
                       ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+                      : location.source === "manual"
+                      ? "bg-purple-100 text-purple-800 border-purple-200"
                       : location.source === "network"
                       ? "bg-blue-100 text-blue-800 border-blue-200"
                       : location.source === "ip"
@@ -337,6 +341,8 @@ const Page = () => {
                   <FiCheckCircle className="shrink-0" />
                   {location.source === "gps"
                     ? `GPS (±${Math.round(location.accuracy)}m)`
+                    : location.source === "manual"
+                    ? "Custom Exact Address"
                     : location.source === "network"
                     ? "Wi-Fi Triangulated"
                     : location.source === "ip"
@@ -344,6 +350,17 @@ const Page = () => {
                     : "Cached Location"}
                 </span>
               )}
+
+              <button
+                type="button"
+                onClick={() => setShowLocationModal(true)}
+                disabled={sosActive}
+                title="Edit / Search your exact street or coordinates"
+                className="inline-flex items-center gap-1 text-xs font-semibold text-gray-700 hover:text-black bg-white hover:bg-gray-100 px-3 py-1.5 rounded-lg border border-gray-300 shadow-2xs transition disabled:opacity-50 cursor-pointer"
+              >
+                <FiEdit3 className="text-xs text-red-600" />
+                <span>Set Exact Area</span>
+              </button>
 
               <button
                 type="button"
@@ -361,12 +378,21 @@ const Page = () => {
           {location?.source === "ip" && !isFetchingLocation && (
             <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2 text-xs text-amber-900">
               <span className="text-base shrink-0">⚠️</span>
-              <div>
+              <div className="space-y-1">
                 <p className="font-semibold">Showing approximate Network/IP location</p>
-                <p className="text-amber-800 mt-0.5">
-                  Your browser or operating system has not granted precise GPS permission, or GPS timed out.
-                  Click the <strong>Refresh GPS</strong> button above or check your browser address bar permissions (tap the lock icon 🔒 next to the URL and set Location to <em>Allow</em>) for pinpoint meter-level accuracy.
+                <p className="text-amber-800">
+                  {location.errorDetail
+                    ? `Reason: ${location.errorDetail}. `
+                    : "Your device or browser has not provided a direct GPS fix. "}
+                  You can tap <strong>Set Exact Area</strong> to search your street or place, or tap <strong>Refresh GPS</strong> after ensuring your browser permission is set to <em>Allow</em>.
                 </p>
+                <button
+                  type="button"
+                  onClick={() => setShowLocationModal(true)}
+                  className="inline-flex items-center gap-1 font-bold text-amber-900 underline mt-1 cursor-pointer"
+                >
+                  <FiEdit3 /> Set your exact street/neighborhood now →
+                </button>
               </div>
             </div>
           )}
@@ -507,6 +533,19 @@ const Page = () => {
           <li><strong>Continuous Safety Tracking:</strong> High-precision location updates are safely transmitted while SOS is active.</li>
         </ul>
       </section>
+      {/* Manual Location Override Modal */}
+      {showLocationModal && (
+        <LocationModal
+          currentLocation={location}
+          onLocationUpdated={(newLoc) => {
+            setLocation(newLoc);
+          }}
+          onClose={() => {
+            setShowLocationModal(false);
+            fetchCurrentLocation(false);
+          }}
+        />
+      )}
     </main>
   );
 };
