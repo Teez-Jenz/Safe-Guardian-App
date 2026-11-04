@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendBrevoEmail } from "@/lib/brevo";
 import { initiateVoiceCall } from "@/lib/africastalking";
 
@@ -13,6 +13,7 @@ export interface DispatchEmergencyAlertOptions {
   location: EmergencyLocation;
   triggerReason?: "manual" | "check_in_missed" | "shake" | string;
   activity?: string;
+  checkInId?: string;
 }
 
 export interface DispatchEmergencyAlertResult {
@@ -72,7 +73,7 @@ export function formatToE164(phone: string, defaultCountryCode = "+234"): string
 export async function dispatchEmergencyAlert(
   options: DispatchEmergencyAlertOptions
 ): Promise<DispatchEmergencyAlertResult> {
-  const { userId, location, triggerReason = "manual", activity } = options;
+  const { userId, location, triggerReason = "manual", activity, checkInId } = options;
 
   const isCheckInMissed = triggerReason === "check_in_missed";
   const activityName = activity || "scheduled safety check-in";
@@ -84,7 +85,7 @@ export async function dispatchEmergencyAlert(
     (lat !== 0 || lon !== 0 ? `${lat.toFixed(5)}, ${lon.toFixed(5)}` : "Approximate location unavailable");
 
   // 1. Fetch the user info
-  const { data: user, error: userError } = await supabase
+  const { data: user, error: userError } = await supabaseAdmin
     .from("users")
     .select("name, email")
     .eq("id", userId)
@@ -97,7 +98,7 @@ export async function dispatchEmergencyAlert(
   const senderName = user?.name || "Your trusted contact";
 
   // 2. Fetch trusted contacts
-  const { data: contacts, error: contactsError } = await supabase
+  const { data: contacts, error: contactsError } = await supabaseAdmin
     .from("contacts")
     .select("name, email, phone_number, relationship")
     .eq("user_id", userId);
@@ -319,7 +320,7 @@ export async function dispatchEmergencyAlert(
         };
       }
 
-      const alertTag = isCheckInMissed ? "checkin" : "sos";
+      const alertTag = isCheckInMissed ? (checkInId ? `checkin_${checkInId.slice(0, 8)}` : "checkin") : "sos";
       const clientRequestId = `sos_${userId}_${contact.phone_number.replace(/\D/g, "")}_${alertTag}`;
       const callResult = await initiateVoiceCall({
         to: formattedTo,
@@ -377,33 +378,40 @@ export async function dispatchEmergencyAlert(
       : (firstCallFailed.value as { error?: string }).error
     : undefined;
 
-  // 5. Update safety status in DB to danger
-  await supabase.from("safety_status").upsert(
-    {
-      user_id: userId,
-      status: "danger",
-      last_seen: new Date().toISOString(),
-    },
-    { onConflict: "user_id" }
-  );
+  // 5. Update safety status in DB if table exists
+  try {
+    await supabaseAdmin.from("safety_status").upsert(
+      {
+        user_id: userId,
+        status: "danger",
+        last_seen: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+  } catch {}
 
-  // 6. Record to route history
+  // 6. Record to route history if table exists
   const routeLabel = isCheckInMissed
     ? `⚠️ Missed Check-In Alert (${activityName}) - Emergency Dispatched near ${address}`
     : `🚨 SOS Triggered - near ${address}`;
 
-  await supabase.from("route_history").insert({
-    user_id: userId,
-    label: routeLabel,
-    recorded_at: new Date().toISOString(),
-  });
+  try {
+    await supabaseAdmin.from("route_history").insert({
+      user_id: userId,
+      label: routeLabel,
+      recorded_at: new Date().toISOString(),
+    });
+  } catch {}
 
-  // 7. Insert to sos_alerts history
-  await supabase.from("sos_alerts").insert({
+  // 7. Insert to sos_alerts history (tagged with checkInId for single-alert deduplication)
+  const tag = isCheckInMissed && checkInId ? ` [checkin:${checkInId}]` : "";
+  const alertAddress = `${address}${tag}`;
+
+  await supabaseAdmin.from("sos_alerts").insert({
     user_id: userId,
     latitude: lat,
     longitude: lon,
-    address: address,
+    address: alertAddress,
   });
 
   return {

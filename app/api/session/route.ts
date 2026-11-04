@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { processOverdueCheckIns } from "@/lib/checkInWorker";
 
 const SESSION_COOKIE_NAME = "safe_guardian_session";
@@ -82,20 +82,22 @@ export async function POST(request: NextRequest) {
 
   // When user logs in, automatically clear all missed check-ins and restore status to safe
   try {
-    await supabase
+    await supabaseAdmin
       .from("check_ins")
       .update({ status: "cleared" })
       .eq("user_id", stringUserId)
-      .in("status", ["missed", "overdue"]);
+      .in("status", ["missed", "overdue", "active"]);
 
-    await supabase.from("safety_status").upsert(
-      {
-        user_id: stringUserId,
-        status: "safe",
-        last_seen: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
-    );
+    try {
+      await supabaseAdmin.from("safety_status").upsert(
+        {
+          user_id: stringUserId,
+          status: "safe",
+          last_seen: new Date().toISOString(),
+        },
+        { onConflict: "user_id" }
+      );
+    } catch {}
   } catch (cleanupErr) {
     console.warn("Notice: unable to clear missed check-ins on login:", cleanupErr);
   }

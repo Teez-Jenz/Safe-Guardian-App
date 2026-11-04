@@ -347,7 +347,9 @@ export default function Page() {
                         })}
                       </span>
                     </div>
-                    <span className="text-xs text-gray-700 font-medium leading-relaxed">{sos.address || "Address unavailable"}</span>
+                    <span className="text-xs text-gray-700 font-medium leading-relaxed">
+                      {(sos.address || "Address unavailable").replace(/\[checkin:.*?\]/g, "").trim()}
+                    </span>
                     <div className="flex justify-between items-center text-[10px] text-gray-400 border-t border-red-100/50 pt-1.5 mt-0.5">
                       <span>Coords: {sos.latitude.toFixed(5)}, {sos.longitude.toFixed(5)}</span>
                       <a

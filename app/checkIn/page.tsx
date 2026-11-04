@@ -59,10 +59,13 @@ function SafetyCheckIn() {
       const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
       setTimeLeft(remaining);
 
-      // Trigger overdue alert immediately if countdown expired and hasn't yet triggered
+      // Trigger overdue alert immediately if countdown expired and hasn't yet triggered (strictly once)
       if (remaining <= 0 && activeCheckIn.status === "active" && !triggeredRef.current) {
         triggeredRef.current = true;
-        triggerCheckInOverdue(activeCheckIn);
+        const alertedKey = `alerted_checkin_${activeCheckIn.id}`;
+        if (typeof window !== "undefined" && !localStorage.getItem(alertedKey)) {
+          triggerCheckInOverdue(activeCheckIn);
+        }
       }
     };
 

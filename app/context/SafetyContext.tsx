@@ -37,7 +37,7 @@ interface SafetyContextType {
   sosAlertResult: SosAlertResult | null;
   startSos: (
     coords: { latitude: number; longitude: number; address?: string },
-    options?: { triggerReason?: string; activity?: string }
+    options?: { triggerReason?: string; activity?: string; checkInId?: string }
   ) => Promise<SosAlertResult | null>;
   stopSos: () => Promise<void>;
   startCheckIn: (activity: string, duration: number) => Promise<void>;
@@ -292,13 +292,25 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // 4. Action: Start SOS
   const startSos = async (
     loc: { latitude: number; longitude: number; address?: string },
-    options?: { triggerReason?: string; activity?: string }
+    options?: { triggerReason?: string; activity?: string; checkInId?: string }
   ): Promise<SosAlertResult | null> => {
     const curUserId = await getOrFetchUserId();
     if (!curUserId) {
       console.error("SOS failed: No active user session.");
       return null;
     }
+
+    const triggerReason = options?.triggerReason || "manual";
+    const activity = options?.activity;
+    const checkInId = options?.checkInId;
+
+    // Deduplication guard: If SOS is already active and this is not a separate check-in alert,
+    // do not trigger a second round of calls or emails.
+    if (sosActive && triggerReason !== "check_in_missed") {
+      console.log("[SafetyContext] SOS is already active. Duplicate trigger prevented.");
+      return sosAlertResult;
+    }
+
     setSosActive(true);
     localStorage.setItem("sos_active", "true");
 
@@ -311,19 +323,19 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    const triggerReason = options?.triggerReason || "manual";
-    const activity = options?.activity;
-
     try {
-      // 1. Insert into public.sos_alerts (SOS history)
+      // 1. Insert into public.sos_alerts (tagged if missed check-in)
+      const tag = triggerReason === "check_in_missed" && checkInId ? ` [checkin:${checkInId}]` : "";
+      const alertAddress = `${finalAddress || ""}${tag}`;
+
       await supabase.from("sos_alerts").insert({
         user_id: curUserId,
         latitude: loc.latitude,
         longitude: loc.longitude,
-        address: finalAddress || "",
+        address: alertAddress,
       });
 
-      // 2. Call local SOS API to notify trusted contacts via Brevo email and Africa's Talking Voice
+      // 2. Call local SOS API to notify trusted contacts via Brevo email and Africa's Talking Voice (exactly once)
       const sosRes = await fetch("/api/sos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -336,6 +348,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           },
           triggerReason,
           activity,
+          checkInId,
         }),
       });
 
@@ -356,26 +369,30 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
-      // 3. Set safety status to danger
-      await supabase.from("safety_status").upsert(
-        {
-          user_id: curUserId,
-          status: "danger",
-          last_seen: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
+      // 3. Set safety status to danger if table exists
+      try {
+        await supabase.from("safety_status").upsert(
+          {
+            user_id: curUserId,
+            status: "danger",
+            last_seen: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
+      } catch {}
 
-      // 4. Log to route history
+      // 4. Log to route history if table exists
       const routeLabel = triggerReason === "check_in_missed"
         ? `⚠️ Missed Check-In Alert (${activity || "Activity"}) - Emergency Dispatched near ${finalAddress || "coordinates"}`
         : `🚨 SOS Triggered - near ${finalAddress || "coordinates"}`;
 
-      await supabase.from("route_history").insert({
-        user_id: curUserId,
-        label: routeLabel,
-        recorded_at: new Date().toISOString(),
-      });
+      try {
+        await supabase.from("route_history").insert({
+          user_id: curUserId,
+          label: routeLabel,
+          recorded_at: new Date().toISOString(),
+        });
+      } catch {}
 
       return alertData;
     } catch (err) {
@@ -393,7 +410,18 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStorage.removeItem("sos_active");
     localStorage.removeItem("sos_alert_result");
 
-    // If an active check-in had expired into missed status, also mark it completed
+    // Inform server to clear active SOS session lock so next SOS can be triggered
+    try {
+      await fetch("/api/sos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", userId: curUserId }),
+      });
+    } catch (cancelErr) {
+      console.warn("Could not notify server of SOS cancel:", cancelErr);
+    }
+
+    // If an active check-in had expired into missed status, also mark it completed/dismissed
     if (activeCheckIn && (activeCheckIn.status === "missed" || activeCheckIn.status === "overdue")) {
       try {
         await supabase
@@ -423,7 +451,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         recorded_at: new Date().toISOString(),
       });
     } catch (err) {
-      console.error("Error disabling SOS state:", err);
+      console.warn("Notice updating safety status after SOS stop:", err);
     }
   };
 
@@ -489,7 +517,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   };
 
-  // 7. Action: Trigger Missed Check-In Emergency Alert
+  // 7. Action: Trigger Missed Check-In Emergency Alert (Strictly Sent ONCE)
   const triggeringCheckInRef = useRef<boolean>(false);
 
   const triggerCheckInOverdue = useCallback(
@@ -497,20 +525,28 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const targetCheckIn = checkInToAlert || activeCheckIn;
       if (!targetCheckIn) return null;
 
-      // Prevent duplicate executions
-      if (triggeringCheckInRef.current || targetCheckIn.status === "missed") {
+      const alertedKey = `alerted_checkin_${targetCheckIn.id}`;
+
+      // Prevent duplicate executions: check in-memory lock, status, and localStorage
+      if (
+        triggeringCheckInRef.current ||
+        targetCheckIn.status === "missed" ||
+        (typeof window !== "undefined" && localStorage.getItem(alertedKey))
+      ) {
         return null;
       }
       triggeringCheckInRef.current = true;
+      try {
+        localStorage.setItem(alertedKey, Date.now().toString());
+      } catch {}
 
       const curUserId = await getOrFetchUserId();
       if (!curUserId) {
-        triggeringCheckInRef.current = false;
         return null;
       }
 
       console.log(
-        `[SafetyContext] Check-in overdue! Triggering emergency alert for activity: ${targetCheckIn.activity}`
+        `[SafetyContext] Check-in overdue! Dispatching single emergency alert for activity: ${targetCheckIn.activity}`
       );
 
       // 1. Mark check-in record status as missed in Supabase
@@ -549,13 +585,13 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       } catch {}
 
-      // 4. Dispatch emergency SOS alert to Brevo email & Africa's Talking Voice
+      // 4. Dispatch emergency SOS alert to Brevo email & Africa's Talking Voice (exactly once)
       const result = await startSos(locCoords, {
         triggerReason: "check_in_missed",
         activity: targetCheckIn.activity,
+        checkInId: targetCheckIn.id,
       });
 
-      triggeringCheckInRef.current = false;
       return result;
     },
     [activeCheckIn, getOrFetchUserId, startSos]
