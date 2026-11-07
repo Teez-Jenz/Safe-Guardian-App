@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 import { getBestLocation } from "@/lib/geolocation";
+import { startBackgroundTracking, stopBackgroundTracking } from "@/lib/nativeBackgroundGeolocation";
 
 interface ActiveCheckIn {
   id: string;
@@ -257,14 +258,22 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     [userId]
   );
 
-  // 3. Continuous Geolocation Watcher Loop (5–10s updates during SOS)
+  // 3. Continuous Geolocation Watcher Loop (Native Android Background Service + HTML5 Stream)
   useEffect(() => {
     if (!userId || (!sosActive && !activeCheckIn)) return;
 
     let watchId: number | null = null;
     let isCancelled = false;
 
-    // A. Active HTML5 hardware positioning stream (real-time movement fixes)
+    // A. Start Native Android Background Geolocation Service (keeps tracking when phone is locked or app is closed)
+    if (sosActive) {
+      startBackgroundTracking((loc) => {
+        if (isCancelled) return;
+        uploadTrackingLocation(loc.latitude, loc.longitude, undefined, loc.accuracy, loc.speed);
+      });
+    }
+
+    // B. Active HTML5 hardware positioning stream (real-time movement fixes)
     if (typeof window !== "undefined" && navigator.geolocation) {
       try {
         watchId = navigator.geolocation.watchPosition(
@@ -290,7 +299,7 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     }
 
-    // B. Guaranteed Heartbeat Interval (every 6 seconds while SOS active, 25s for check-in)
+    // C. Guaranteed Heartbeat Interval (every 6 seconds while SOS active, 25s for check-in)
     const intervalMs = sosActive ? 6000 : 25000;
     const heartbeatTimer = setInterval(async () => {
       if (isCancelled) return;
@@ -304,6 +313,9 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     return () => {
       isCancelled = true;
+      if (sosActive) {
+        stopBackgroundTracking();
+      }
       if (watchId !== null && typeof window !== "undefined" && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchId);
       }
@@ -462,6 +474,9 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setSosAlertResult(null);
     localStorage.removeItem("sos_active");
     localStorage.removeItem("sos_alert_result");
+
+    // Immediately stop native Android background tracking service
+    stopBackgroundTracking();
 
     // Inform server to clear active SOS session lock and terminate live tracking
     try {
