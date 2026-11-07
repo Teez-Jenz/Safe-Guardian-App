@@ -7,9 +7,18 @@ export function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  // Public routes that must NEVER require login (e.g. emergency contacts tracking victim's live movement)
+  if (
+    pathname.startsWith("/track") ||
+    pathname.startsWith("/api/track") ||
+    pathname === "/login" ||
+    pathname === "/signin"
+  ) {
+    return NextResponse.next();
+  }
+
   // Protected routes
   const protectedRoutes = [
-    "/",
     "/dashboard",
     "/profile",
     "/contacts",
@@ -18,9 +27,8 @@ export function middleware(request: NextRequest) {
     "/checkIn",
   ];
 
-  const isProtectedRoute = protectedRoutes.some((route) =>
-    pathname.startsWith(route),
-  );
+  const isProtectedRoute =
+    pathname === "/" || protectedRoutes.some((route) => pathname.startsWith(route));
 
   if (isProtectedRoute && !session) {
     return NextResponse.redirect(new URL("/login", request.url));

@@ -114,6 +114,8 @@ export async function dispatchEmergencyAlert(
 
   const googleMapsLink = `https://www.google.com/maps?q=${lat},${lon}`;
   const googleDirectionsLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://safeguardianapp.netlify.app";
+  const liveTrackingUrl = `${appUrl}/track/${userId}`;
   const alertTime = new Date().toLocaleString("en-US", {
     dateStyle: "full",
     timeStyle: "medium",
@@ -134,8 +136,6 @@ export async function dispatchEmergencyAlert(
   const emailCalloutText = isCheckInMissed
     ? `⚠️ <strong>${senderName}</strong> started a safety check-in for <strong>&quot;${activityName}&quot;</strong> on SafeAlert Guardian, but has missed their check-in deadline without confirming safety. Their emergency alert has been automatically triggered. Please check their GPS location below and reach out immediately!`
     : `⚠️ <strong>${senderName}</strong> has triggered an SOS emergency signal and may be in danger. Please check their location below and contact them or emergency services immediately!`;
-
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://safeguardianapp.netlify.app";
 
   // 3. Send Email Alerts via Brevo
   const emailPromises = contacts
@@ -216,21 +216,37 @@ export async function dispatchEmergencyAlert(
                     </tr>
                   </table>
 
-                  <!-- Primary Action Buttons -->
+                  <!-- Primary Live Tracking Action Button -->
                   <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin: 28px 0 20px;">
                     <tr>
                       <td align="center">
-                        <table border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px;">
+                        <!-- Primary Live Tracking CTA -->
+                        <table border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 16px; width: 100%; max-width: 460px;">
                           <tr>
-                            <td align="center" style="border-radius: 8px; background-color: #dc2626;">
-                              <a href="${googleMapsLink}" target="_blank" style="display: inline-block; padding: 16px 36px; font-family: sans-serif; font-size: 16px; font-weight: 700; color: #ffffff; text-decoration: none; border-radius: 8px; box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);">
-                                🗺️ Open Location on Google Maps
+                            <td align="center" style="border-radius: 12px; background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%); box-shadow: 0 6px 20px rgba(220, 38, 38, 0.45);">
+                              <a href="${liveTrackingUrl}" target="_blank" style="display: block; padding: 18px 28px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 17px; font-weight: 800; color: #ffffff; text-decoration: none; letter-spacing: 0.5px; text-transform: uppercase;">
+                                🔴 TRACK LIVE MOVEMENT (REAL-TIME MAP) →
                               </a>
                             </td>
                           </tr>
                         </table>
 
-                        <div style="margin-top: 8px;">
+                        <p style="margin: 0 0 14px; font-size: 13px; color: #64748b;">
+                          Click the button above to watch ${senderName}&apos;s location update live in real-time.
+                        </p>
+
+                        <!-- Secondary External Map Options -->
+                        <table border="0" cellpadding="0" cellspacing="0" style="margin-bottom: 12px;">
+                          <tr>
+                            <td align="center" style="border-radius: 8px; background-color: #1f2937;">
+                              <a href="${googleMapsLink}" target="_blank" style="display: inline-block; padding: 12px 28px; font-family: sans-serif; font-size: 14px; font-weight: 600; color: #ffffff; text-decoration: none; border-radius: 8px;">
+                                🗺️ Open in Google Maps
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+
+                        <div style="margin-top: 6px;">
                           <a href="${googleDirectionsLink}" target="_blank" style="font-size: 13px; color: #dc2626; font-weight: 600; text-decoration: underline;">
                             Get Turn-by-Turn Driving Directions →
                           </a>
@@ -238,6 +254,16 @@ export async function dispatchEmergencyAlert(
                       </td>
                     </tr>
                   </table>
+
+                  <!-- Live Tracking Direct Link -->
+                  <div style="margin-top: 24px; padding: 14px; background-color: #fef2f2; border-left: 4px solid #dc2626; border-radius: 6px;">
+                    <p style="margin: 0 0 4px; font-size: 12px; font-weight: 700; color: #991b1b; text-transform: uppercase;">
+                      Live GPS Tracking Link:
+                    </p>
+                    <p style="margin: 0; font-size: 12px; color: #475569; word-break: break-all;">
+                      <a href="${liveTrackingUrl}" style="color: #dc2626; font-weight: 600;">${liveTrackingUrl}</a>
+                    </p>
+                  </div>
 
                   <!-- Plain text fallback link -->
                   <div style="margin-top: 24px; padding: 12px; background-color: #f1f5f9; border-radius: 6px;">

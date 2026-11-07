@@ -218,57 +218,98 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     loadSessionAndState();
   }, []);
 
-  // 2. Location Tracking and Address Geocoding Action
-  const trackLocation = useCallback(async () => {
+  // 2. Real-Time Continuous GPS Tracking Engine (Uploads to Supabase every 5-10s)
+  const lastUploadedCoordsRef = useRef<{ lat: number; lon: number; time: number }>({
+    lat: 0,
+    lon: 0,
+    time: 0,
+  });
+
+  const uploadTrackingLocation = useCallback(
+    async (lat: number, lon: number, address?: string, accuracy?: number, speed?: number) => {
+      if (!userId || (!lat && !lon)) return;
+
+      const now = Date.now();
+      const prev = lastUploadedCoordsRef.current;
+      // Skip upload only if coordinates are identical and uploaded less than 4 seconds ago
+      if (prev.lat === lat && prev.lon === lon && now - prev.time < 4000) {
+        return;
+      }
+      lastUploadedCoordsRef.current = { lat, lon, time: now };
+
+      try {
+        await fetch("/api/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            latitude: lat,
+            longitude: lon,
+            address,
+            accuracy,
+            speed,
+          }),
+        });
+      } catch (uploadErr) {
+        console.warn("[SafetyContext] Failed to upload tracking coordinates:", uploadErr);
+      }
+    },
+    [userId]
+  );
+
+  // 3. Continuous Geolocation Watcher Loop (5–10s updates during SOS)
+  useEffect(() => {
     if (!userId || (!sosActive && !activeCheckIn)) return;
 
-    try {
-      const loc = await getBestLocation();
-      const latitude = loc.latitude;
-      const longitude = loc.longitude;
-      const address = loc.address || `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+    let watchId: number | null = null;
+    let isCancelled = false;
 
-      const statusVal = sosActive ? "danger" : activeCheckIn ? "warning" : "safe";
-
-      // Update public.safety_status
-      await supabase.from("safety_status").upsert(
-        {
-          user_id: userId,
-          status: statusVal,
-          last_seen: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
-
-      // Log to public.route_history
-      const label = sosActive
-        ? `🚨 SOS Active - near ${address}`
-        : `⏱️ Check-in active (${activeCheckIn?.activity}) - near ${address}`;
-
-      await supabase.from("route_history").insert({
-        user_id: userId,
-        label: label,
-        recorded_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.warn("Background location tracking notice:", error);
+    // A. Active HTML5 hardware positioning stream (real-time movement fixes)
+    if (typeof window !== "undefined" && navigator.geolocation) {
+      try {
+        watchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            if (isCancelled) return;
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+            const accuracy = pos.coords.accuracy;
+            const speed = pos.coords.speed || undefined;
+            uploadTrackingLocation(lat, lon, undefined, accuracy, speed);
+          },
+          (err) => {
+            console.warn("[SafetyContext] Geolocation continuous watch notice:", err.message);
+          },
+          {
+            enableHighAccuracy: true,
+            maximumAge: 3000,
+            timeout: 8000,
+          }
+        );
+      } catch (err) {
+        console.warn("[SafetyContext] Could not start geolocation watch:", err);
+      }
     }
-  }, [userId, sosActive, activeCheckIn]);
 
-  // 3. Set up the background tracking loop (every 30 seconds)
-  useEffect(() => {
-    if (!userId) return;
-    if (!sosActive && !activeCheckIn) return;
+    // B. Guaranteed Heartbeat Interval (every 6 seconds while SOS active, 25s for check-in)
+    const intervalMs = sosActive ? 6000 : 25000;
+    const heartbeatTimer = setInterval(async () => {
+      if (isCancelled) return;
+      try {
+        const loc = await getBestLocation({ forceFresh: true });
+        if (loc && (loc.latitude || loc.longitude)) {
+          uploadTrackingLocation(loc.latitude, loc.longitude, loc.address, loc.accuracy);
+        }
+      } catch {}
+    }, intervalMs);
 
-    // Track immediately on activation
-    trackLocation();
-
-    const timer = setInterval(() => {
-      trackLocation();
-    }, 30000);
-
-    return () => clearInterval(timer);
-  }, [userId, sosActive, activeCheckIn, trackLocation]);
+    return () => {
+      isCancelled = true;
+      if (watchId !== null && typeof window !== "undefined" && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+      clearInterval(heartbeatTimer);
+    };
+  }, [userId, sosActive, activeCheckIn, uploadTrackingLocation]);
 
   // Helper to resolve user ID on the fly if state hasn't synchronized yet
   const getOrFetchUserId = async (): Promise<string | null> => {
@@ -369,6 +410,18 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         }
       }
 
+      // Initialize live tracking stream with initial location fix
+      fetch("/api/track", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: curUserId,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          address: finalAddress,
+        }),
+      }).catch(() => {});
+
       // 3. Set safety status to danger if table exists
       try {
         await supabase.from("safety_status").upsert(
@@ -410,15 +463,22 @@ export const SafetyProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     localStorage.removeItem("sos_active");
     localStorage.removeItem("sos_alert_result");
 
-    // Inform server to clear active SOS session lock so next SOS can be triggered
+    // Inform server to clear active SOS session lock and terminate live tracking
     try {
-      await fetch("/api/sos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "cancel", userId: curUserId }),
-      });
+      await Promise.allSettled([
+        fetch("/api/sos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "cancel", userId: curUserId }),
+        }),
+        fetch("/api/track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "resolve", userId: curUserId }),
+        }),
+      ]);
     } catch (cancelErr) {
-      console.warn("Could not notify server of SOS cancel:", cancelErr);
+      console.warn("Could not notify server of SOS cancel / tracking termination:", cancelErr);
     }
 
     // If an active check-in had expired into missed status, also mark it completed/dismissed

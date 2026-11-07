@@ -219,6 +219,26 @@ const Page = () => {
               </div>
             </div>
 
+            {/* Live Tracking Link in Active Banner */}
+            {userId && (
+              <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-red-800/80 p-3 rounded-xl border border-red-400/40">
+                <div className="flex items-center gap-2 text-xs text-red-100">
+                  <span className="w-2.5 h-2.5 rounded-full bg-white animate-ping" />
+                  <span>
+                    <strong>Continuous GPS Live Tracking:</strong> Broadcasting your real-time coordinates every 6s.
+                  </span>
+                </div>
+                <a
+                  href={`/track/${userId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3.5 py-1.5 bg-white text-red-700 hover:bg-red-50 rounded-lg text-xs font-bold shrink-0 text-center transition shadow-sm"
+                >
+                  View Live Tracking Map →
+                </a>
+              </div>
+            )}
+
             {sosAlertResult?.callError && (
               <div className="bg-red-800/80 border border-red-400/40 p-2.5 rounded-lg text-xs text-red-100 flex items-start gap-2">
                 <span className="font-bold shrink-0">⚠️ Africa's Talking Notice:</span>
